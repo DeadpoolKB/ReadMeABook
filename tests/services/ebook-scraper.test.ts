@@ -6,7 +6,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'events';
 import path from 'path';
-import { clearMd5Cache, downloadEbook, testFlareSolverrConnection } from '@/lib/services/ebook-scraper';
+import {
+  clearMd5Cache,
+  downloadEbook,
+  searchByTitle,
+  testFlareSolverrConnection,
+} from '@/lib/services/ebook-scraper';
 
 const axiosMock = vi.hoisted(() => ({
   get: vi.fn(),
@@ -228,6 +233,43 @@ describe('E-book sidecar', () => {
     expect(result.success).toBe(true);
     expect(result.format).toBe('pdf');
     expect(axiosMock.post).toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it('broadens title search and tries any format after the preferred format misses', async () => {
+    vi.useFakeTimers();
+    axiosMock.get.mockImplementation(async (url: string) => {
+      const searchUrl = new URL(url);
+      const params = searchUrl.searchParams;
+
+      if (params.has('termtype_1') || params.get('ext') === 'epub') {
+        return { data: '<html></html>' };
+      }
+      if (params.get('q') === 'The Girl with the Dragon Tattoo' && !params.has('ext')) {
+        return { data: '<a href="/md5/abc123">The Girl with the Dragon Tattoo</a>' };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const searchPromise = searchByTitle(
+      'The Girl with the Dragon Tattoo',
+      'Stieg Larsson',
+      'epub',
+      'https://annas-archive.gl'
+    );
+    await vi.runAllTimersAsync();
+
+    await expect(searchPromise).resolves.toBe('abc123');
+    expect(axiosMock.get).toHaveBeenCalledTimes(3);
+    const lastSearchUrl = new URL(axiosMock.get.mock.calls[2][0] as string);
+    expect(lastSearchUrl.searchParams.get('q')).toBe('The Girl with the Dragon Tattoo');
+    expect(lastSearchUrl.searchParams.has('ext')).toBe(false);
+    expect(lastSearchUrl.searchParams.getAll('content')).toEqual([
+      'book_nonfiction',
+      'book_fiction',
+      'book_unknown',
+    ]);
 
     vi.useRealTimers();
   });

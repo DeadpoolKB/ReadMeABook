@@ -420,67 +420,84 @@ export async function searchByTitle(
   }
 
   try {
-    // Build search URL using specific term types for author and title (more accurate than raw query)
+    // Try the precise author/title search before widening the query.
     const encodedAuthor = encodeURIComponent(author);
     const encodedTitle = encodeURIComponent(title);
-
-    // Use Anna's Archive advanced search with specific term types
     let searchUrl = `${baseUrl}/search?termtype_1=author&termval_1=${encodedAuthor}&termtype_2=title&termval_2=${encodedTitle}`;
 
-    // Add format filter if not 'any'
     if (format && format !== 'any') {
       searchUrl += `&ext=${format}`;
     }
 
-    // Add content type filters (books only, all fiction/nonfiction/unknown)
     searchUrl += '&content=book_nonfiction&content=book_fiction&content=book_unknown';
-
-    // Add language filter
     searchUrl += `&lang=${languageCode}`;
-
-    // Empty raw query (we're using specific terms instead)
     searchUrl += '&q=';
 
-    moduleLogger.debug(`Title search URL: ${searchUrl}`);
-
-    const html = await fetchHtml(searchUrl, flaresolverrUrl, logger);
-    const $ = cheerio.load(html);
-
-    // Exclude MD5 links from "Recent downloads" banner and "Partial matches" section
-    const searchResultLinks = $('a[href*="/md5/"]').filter((i, elem) => {
-      // Exclude links inside the recent downloads banner
-      if ($(elem).closest('.js-recent-downloads-container').length > 0) {
-        return false;
+    const freeTextSearchUrl = (query: string, searchFormat: string): string => {
+      const params = new URLSearchParams();
+      params.set('q', query);
+      if (searchFormat && searchFormat !== 'any') {
+        params.set('ext', searchFormat);
       }
-      // Exclude links inside the partial matches section
-      if ($(elem).closest('.js-partial-matches-show').length > 0) {
-        return false;
-      }
-      return true;
-    });
+      params.append('content', 'book_nonfiction');
+      params.append('content', 'book_fiction');
+      params.append('content', 'book_unknown');
+      params.set('lang', languageCode);
+      return `${baseUrl}/search?${params.toString()}`;
+    };
 
-    const allMd5Links = $('a[href*="/md5/"]').length;
-    moduleLogger.debug('Title search results', { totalMd5Links: allMd5Links, searchResultLinks: searchResultLinks.length });
-
-    // Extract MD5 from first search result link
-    const firstResult = searchResultLinks.first();
-    const href = firstResult.attr('href');
-
-    if (!href) {
-      await logger?.warn(`No search results found for title: "${title}" by ${author}`);
-      md5Cache.set(cacheKey, null);
-      return null;
+    const searches = [
+      { url: searchUrl, description: 'author and title' },
+      { url: freeTextSearchUrl(title, format), description: 'title' },
+    ];
+    if (format && format !== 'any') {
+      searches.push({
+        url: freeTextSearchUrl(title, 'any'),
+        description: 'title in any format',
+      });
     }
 
-    // Extract MD5 from href
-    const md5Match = href.match(/\/md5\/([a-f0-9]+)/);
-    const md5 = md5Match ? md5Match[1] : null;
+    for (const search of searches) {
+      try {
+        moduleLogger.debug(`Title search URL (${search.description}): ${search.url}`);
+        const html = await fetchHtml(search.url, flaresolverrUrl, logger);
+        const $ = cheerio.load(html);
 
-    // Cache result
-    md5Cache.set(cacheKey, md5);
+        // Exclude MD5 links from "Recent downloads" and "Partial matches".
+        const searchResultLinks = $('a[href*="/md5/"]').filter((i, elem) => {
+          return $(elem).closest(
+            '.js-recent-downloads-container, .js-partial-matches-show'
+          ).length === 0;
+        });
 
-    await delay(REQUEST_DELAY_MS);
-    return md5;
+        const href = searchResultLinks.first().attr('href');
+        const md5Match = href?.match(/\/md5\/([a-f0-9]+)/);
+        const md5 = md5Match ? md5Match[1] : null;
+
+        moduleLogger.debug('Title search results', {
+          description: search.description,
+          totalMd5Links: $('a[href*="/md5/"]').length,
+          searchResultLinks: searchResultLinks.length,
+          md5,
+        });
+
+        if (md5) {
+          md5Cache.set(cacheKey, md5);
+          await delay(REQUEST_DELAY_MS);
+          return md5;
+        }
+      } catch (error) {
+        await logger?.error(
+          `Title search (${search.description}) failed: ${
+            error instanceof Error ? error.message : 'Unknown error'
+          }`
+        );
+      }
+    }
+
+    await logger?.warn(`No search results found for title: "${title}" by ${author}`);
+    md5Cache.set(cacheKey, null);
+    return null;
   } catch (error) {
     await logger?.error(
       `Title search failed: ${error instanceof Error ? error.message : 'Unknown error'}`

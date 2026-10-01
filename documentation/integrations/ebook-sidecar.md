@@ -16,7 +16,8 @@ Ebooks are first-class citizens in RMAB, with their own request type, tracking, 
 
 ### Source Priority
 1. **Anna's Archive** (if enabled) - Direct HTTP downloads
-   - Searched first via ASIN, then title + author
+   - Searched first via ASIN, then exact author + title
+   - If no result, retries with title-only search in the preferred format, then any format
    - Uses FlareSolverr if configured (Cloudflare bypass)
 2. **Indexer Search** (if enabled, and no Anna's Archive result)
    - Searches Prowlarr with ebook categories (default: 7020)
@@ -198,6 +199,8 @@ File Server: http://[server]/path/to/file.epub
 Search: https://annas-archive.gl/search?q=Title+Author&ext=epub&lang=en
   ↓ (Same flow from MD5 page)
 ```
+
+If the exact author + title query returns no result, the scraper retries a broader title-only query, first with the preferred format and then without a format filter.
 
 ## File Naming
 
