@@ -9,6 +9,9 @@ import { prisma } from '@/lib/db';
 import { getJobQueueService } from '@/lib/services/job-queue.service';
 import { RMABLogger } from '@/lib/utils/logger';
 import { z } from 'zod';
+import {
+  getEbookSourceDefinition,
+} from '@/lib/services/ebook-source-registry';
 
 const logger = RMABLogger.create('API.Admin.Requests.Approve');
 
@@ -95,13 +98,23 @@ export async function POST(
               source: selectedTorrent.source,
             });
 
-            // Handle ebook requests with Anna's Archive source differently
-            if (isEbookRequest && selectedTorrent.source === 'annas_archive') {
-              // Create download history record for Anna's Archive
+            const ebookSource = isEbookRequest && typeof selectedTorrent.source === 'string'
+              ? getEbookSourceDefinition(selectedTorrent.source)
+              : undefined;
+            if (isEbookRequest && selectedTorrent.source && !ebookSource) {
+              return NextResponse.json(
+                { error: `Ebook provider "${selectedTorrent.source}" is not implemented` },
+                { status: 400 }
+              );
+            }
+
+            // Handle direct-download ebook sources differently from indexers
+            if (isEbookRequest && ebookSource?.downloadStrategy === 'direct') {
+              // Create download history record for the direct-download provider
               const downloadHistory = await prisma.downloadHistory.create({
                 data: {
                   requestId: existingRequest.id,
-                  indexerName: "Anna's Archive",
+                  indexerName: ebookSource.name,
                   torrentName: `${existingRequest.audiobook.title} - ${existingRequest.audiobook.author}.${selectedTorrent.format || 'epub'}`,
                   torrentSizeBytes: null,
                   qualityScore: selectedTorrent.score || 100,
@@ -121,7 +134,7 @@ export async function POST(
                 });
               }
 
-              // Trigger direct download job for Anna's Archive
+              // Trigger the provider's direct HTTP download
               await jobQueue.addStartDirectDownloadJob(
                 existingRequest.id,
                 downloadHistory.id,

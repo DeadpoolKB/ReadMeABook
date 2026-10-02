@@ -6,6 +6,8 @@
 /**
  * Main settings object structure
  */
+import type { EbookSourceConfiguration } from '@/lib/services/ebook-source-registry';
+
 export interface Settings {
   backendMode: 'plex' | 'audiobookshelf';
   hasLocalUsers: boolean;
@@ -137,6 +139,8 @@ export interface EbookSettings {
   autoGrabEnabled: boolean;
   // Kindle compatibility
   kindleFixEnabled: boolean;
+  // Generic configuration for providers added in the future
+  additionalSources: EbookSourceConfiguration[];
 }
 
 /**

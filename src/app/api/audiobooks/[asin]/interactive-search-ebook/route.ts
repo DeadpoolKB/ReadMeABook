@@ -17,6 +17,7 @@ import { groupIndexersByCategories } from '@/lib/utils/indexer-grouping';
 import { findPlexMatch } from '@/lib/utils/audiobook-matcher';
 import { getAudibleService } from '@/lib/integrations/audible.service';
 import { RMABLogger } from '@/lib/utils/logger';
+import { EBOOK_SOURCE_IDS, type EbookSourceId } from '@/lib/services/ebook-source-registry';
 import { resolveInteractiveSearchAccess } from '@/lib/utils/permissions';
 import { getLanguageForRegion } from '@/lib/constants/language-config';
 import type { AudibleRegion } from '@/lib/types/audible';
@@ -69,7 +70,7 @@ export interface EbookSearchResult {
     notes: string[];
   };
 
-  source: 'annas_archive' | 'prowlarr';
+  source: EbookSourceId;
   format?: string;
   md5?: string;
   downloadUrls?: string[];
@@ -395,7 +396,7 @@ async function searchAnnasArchiveForInteractive(
       notes: [searchMethod === 'asin' ? 'ASIN match' : 'Title/Author match', "Anna's Archive"],
     },
 
-    source: 'annas_archive',
+    source: EBOOK_SOURCE_IDS.ANNAS_ARCHIVE,
     format: preferredFormat,
     md5,
     downloadUrls: slowLinks,
@@ -506,7 +507,7 @@ async function searchIndexersForInteractive(
     rank: result.rank,
     breakdown: result.breakdown,
 
-    source: 'prowlarr',
+    source: EBOOK_SOURCE_IDS.PROWLARR,
     format: result.ebookFormat,
     protocol: result.protocol,
   }));

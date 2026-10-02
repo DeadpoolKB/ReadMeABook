@@ -6,6 +6,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth, requireAdmin, AuthenticatedRequest } from '@/lib/middleware/auth';
 import { RMABLogger } from '@/lib/utils/logger';
+import {
+  EBOOK_SOURCE_SECRET_MASK,
+  preserveEbookSourceSecrets,
+  validateEbookSourceConfigurations,
+} from '@/lib/services/ebook-source-registry';
 
 const logger = RMABLogger.create('API.Admin.Settings.Ebook');
 
@@ -13,8 +18,27 @@ export async function PUT(request: NextRequest) {
   return requireAuth(request, async (req: AuthenticatedRequest) => {
     return requireAdmin(req, async () => {
       try {
-        // Parse request body - new structure with separate source toggles
-        const { annasArchiveEnabled, indexerSearchEnabled, format, baseUrl, flaresolverrUrl, autoGrabEnabled, kindleFixEnabled } = await request.json();
+        const body = await request.json();
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+          return NextResponse.json({ error: 'Invalid settings payload' }, { status: 400 });
+        }
+        const {
+          annasArchiveEnabled,
+          indexerSearchEnabled,
+          format,
+          baseUrl,
+          flaresolverrUrl,
+          autoGrabEnabled,
+          kindleFixEnabled,
+          additionalSources,
+        } = body;
+
+        const validatedSources = additionalSources === undefined
+          ? undefined
+          : validateEbookSourceConfigurations(additionalSources);
+        if (validatedSources && !validatedSources.valid) {
+          return NextResponse.json({ error: validatedSources.error }, { status: 400 });
+        }
 
         // Enforce: auto-grab must be false if no sources are enabled
         const effectiveAutoGrabEnabled = (annasArchiveEnabled || indexerSearchEnabled) ? (autoGrabEnabled ?? true) : false;
@@ -47,6 +71,22 @@ export async function PUT(request: NextRequest) {
         // Save configuration
         const { getConfigService } = await import('@/lib/services/config.service');
         const configService = getConfigService();
+        let sourceConfigsToSave = validatedSources?.valid ? validatedSources.configs : undefined;
+
+        if (
+          sourceConfigsToSave?.some((source) =>
+            Object.values(source.settings).includes(EBOOK_SOURCE_SECRET_MASK)
+          )
+        ) {
+          const previousSourcesValue = await configService.get('ebook_additional_sources');
+          if (previousSourcesValue) {
+            const previousValidation = validateEbookSourceConfigurations(JSON.parse(previousSourcesValue));
+            if (!previousValidation.valid) {
+              throw new Error(`Invalid stored ebook source settings: ${previousValidation.error}`);
+            }
+            sourceConfigsToSave = preserveEbookSourceSecrets(sourceConfigsToSave, previousValidation.configs);
+          }
+        }
 
         const configs = [
           // New granular source toggles
@@ -96,6 +136,15 @@ export async function PUT(request: NextRequest) {
             description: 'Apply compatibility fixes to EPUB files for Kindle import',
           },
         ];
+
+        if (sourceConfigsToSave) {
+          configs.push({
+            key: 'ebook_additional_sources',
+            value: JSON.stringify(sourceConfigsToSave),
+            category: 'ebook',
+            description: 'Generic configuration for additional ebook source providers',
+          });
+        }
 
         await configService.setMany(configs);
 

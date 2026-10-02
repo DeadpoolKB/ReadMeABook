@@ -69,7 +69,7 @@ src/app/admin/settings/
 3. **Prowlarr** - URL, API key (masked), indexer selection with priority, seeding time, RSS monitoring toggle, **audiobook/ebook categories per indexer**
 4. **Download Client** - Type (qBittorrent, Transmission, SABnzbd), URL, credentials (masked), custom download path (per-client relative sub-path with live preview)
 5. **Paths** - Download + media directories, audiobook organization template, metadata tagging toggle, chapter merging toggle, Plex format coercion toggle
-6. **E-book Sidecar** - Multi-source ebook downloads (Anna's Archive + Indexer Search), preferred format
+6. **E-book Sidecar** - Anna's Archive + Indexer Search, preferred format, generic additional-provider and mirror configuration
 7. **BookDate** - AI provider, API key (encrypted), model selection, library scope, custom prompt, swipe history
 8. **Notifications** - Multiple backends (Discord, Pushover), event subscriptions, test functionality
 
@@ -77,7 +77,7 @@ src/app/admin/settings/
 
 **Purpose:** Configure ebook download sources and preferences to accompany audiobook downloads.
 
-**Tab Structure (3 sections):**
+**Tab Structure:**
 
 1. **Anna's Archive Section**
    - Enable toggle for Anna's Archive downloads
@@ -88,7 +88,13 @@ src/app/admin/settings/
    - Enable toggle for indexer-based ebook search via Prowlarr
    - Hint directing users to Indexers tab for category configuration
 
-3. **General Settings Section** (visible when any source enabled)
+3. **Additional Source Configuration**
+   - Add a future provider ID and display name
+   - Configure multiple HTTP(S) mirror URLs and one preferred mirror
+   - Provider definitions may declare text, URL, password, boolean, or select settings; password/secret values are masked and retained when unchanged
+   - Stored configuration only; adding an entry does not enable search/download until a provider adapter is implemented
+
+4. **General Settings Section** (visible when an implemented source is enabled)
    - Preferred format: EPUB (recommended), PDF, MOBI, AZW3, Any
    - Auto-grab toggle: Automatically create ebook requests after audiobook downloads
    - Kindle fix toggle: Apply compatibility fixes to EPUB files (only visible when EPUB format selected)
@@ -103,10 +109,12 @@ src/app/admin/settings/
 | `ebook_kindle_fix_enabled` | `false` | Apply Kindle compatibility fixes to EPUB files |
 | `ebook_sidecar_base_url` | `https://annas-archive.gl` | Anna's Archive mirror |
 | `ebook_sidecar_flaresolverr_url` | `` | FlareSolverr URL |
+| `ebook_additional_sources` | `[]` | Future provider IDs, display names, mirror URLs, preferred mirror, and settings |
 
 **Behavior:**
 - If Anna's Archive enabled → Searches Anna's Archive first
 - If Indexer Search enabled → Falls back to indexer search if Anna's Archive fails/disabled
+- Additional source entries only store provider configuration; their adapters must be implemented before they can search or download.
 - If both disabled → Ebook downloads completely off
 - If auto-grab disabled → Manual "Fetch Ebook" button only (admin buttons still work)
 - If Kindle fix enabled (and EPUB format) → Applies compatibility fixes during organization

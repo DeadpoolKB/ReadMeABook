@@ -7,6 +7,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth, requireAdmin, AuthenticatedRequest } from '@/lib/middleware/auth';
 import { prisma } from '@/lib/db';
 import { RMABLogger } from '@/lib/utils/logger';
+import {
+  maskEbookSourceConfigurationSecrets,
+  validateEbookSourceConfigurations,
+  type EbookSourceConfiguration,
+} from '@/lib/services/ebook-source-registry';
 
 const logger = RMABLogger.create('API.Admin.Settings');
 
@@ -17,6 +22,15 @@ export async function GET(request: NextRequest) {
         // Fetch all configuration
     const configs = await prisma.configuration.findMany();
     const configMap = new Map(configs.map((c) => [c.key, c.value]));
+    const sourceConfigsValue = configMap.get('ebook_additional_sources');
+    let additionalEbookSources: EbookSourceConfiguration[] = [];
+    if (sourceConfigsValue) {
+      const validation = validateEbookSourceConfigurations(JSON.parse(sourceConfigsValue));
+      if (!validation.valid) {
+        throw new Error(`Invalid stored ebook source settings: ${validation.error}`);
+      }
+      additionalEbookSources = maskEbookSourceConfigurationSecrets(validation.configs);
+    }
 
     // Check if any local users exist (for validation)
     const hasLocalUsers = (await prisma.user.count({
@@ -155,6 +169,7 @@ export async function GET(request: NextRequest) {
         autoGrabEnabled: configMap.get('ebook_auto_grab_enabled') !== 'false',
         // Kindle compatibility fixes: default false
         kindleFixEnabled: configMap.get('ebook_kindle_fix_enabled') === 'true',
+        additionalSources: additionalEbookSources,
       },
       general: {
         appName: configMap.get('app_name') || 'ReadMeABook',

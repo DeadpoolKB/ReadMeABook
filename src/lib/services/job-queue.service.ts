@@ -10,6 +10,7 @@ import { TorrentResult } from '../utils/ranking-algorithm';
 import { DownloadClientType } from '../interfaces/download-client.interface';
 import { RMABLogger } from '../utils/logger';
 import type { NotificationEvent } from '@/lib/constants/notification-events';
+import type { EbookSourceId } from './ebook-source-registry';
 
 const logger = RMABLogger.create('JobQueue');
 
@@ -153,7 +154,7 @@ export interface EbookSearchResult {
   format: string;
   fileSize?: number;
   downloadUrls: string[]; // Slow download URLs from Anna's Archive
-  source: 'annas_archive'; // For future indexer support
+  source: EbookSourceId;
   score: number; // Ranking score (for future multi-source ranking)
 }
 

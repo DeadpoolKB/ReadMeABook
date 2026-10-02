@@ -21,6 +21,7 @@ import {
   searchByTitle,
   getSlowDownloadLinks,
 } from '@/lib/services/ebook-scraper';
+import { EBOOK_SOURCE_IDS, type EbookSourceId } from '@/lib/services/ebook-source-registry';
 
 const logger = RMABLogger.create('API.InteractiveSearchEbook');
 
@@ -54,7 +55,7 @@ export interface EbookSearchResult {
   };
 
   // Ebook-specific fields
-  source: 'annas_archive' | 'prowlarr';
+  source: EbookSourceId;
   format?: string;
   md5?: string;
   downloadUrls?: string[];
@@ -305,7 +306,7 @@ async function searchAnnasArchiveForInteractive(
       notes: [searchMethod === 'asin' ? 'ASIN match' : 'Title/Author match', "Anna's Archive"],
     },
 
-    source: 'annas_archive',
+    source: EBOOK_SOURCE_IDS.ANNAS_ARCHIVE,
     format: preferredFormat,
     md5,
     downloadUrls: slowLinks,
@@ -458,7 +459,7 @@ async function searchIndexersForInteractive(
     rank: result.rank,
     breakdown: result.breakdown,
 
-    source: 'prowlarr',
+    source: EBOOK_SOURCE_IDS.PROWLARR,
     format: result.ebookFormat,
     protocol: result.protocol,
   }));
