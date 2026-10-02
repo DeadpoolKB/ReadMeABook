@@ -12,6 +12,11 @@ import { prisma } from '@/lib/db';
 import { getJobQueueService } from '@/lib/services/job-queue.service';
 import { getConfigService } from '@/lib/services/config.service';
 import { RMABLogger } from '@/lib/utils/logger';
+import {
+  EBOOK_SOURCE_IDS,
+  getEbookSourceDefinition,
+  type EbookSourceId,
+} from '@/lib/services/ebook-source-registry';
 
 const logger = RMABLogger.create('API.SelectEbook');
 
@@ -26,7 +31,7 @@ interface SelectedEbook {
   infoUrl?: string;
   score: number;
   finalScore: number;
-  source: 'annas_archive' | 'prowlarr';
+  source: EbookSourceId;
   format?: string;
   md5?: string;
   downloadUrls?: string[];
@@ -50,6 +55,13 @@ export async function POST(
 
         if (!selectedEbook.source) {
           return NextResponse.json({ error: 'Ebook source not specified' }, { status: 400 });
+        }
+        const sourceDefinition = getEbookSourceDefinition(selectedEbook.source);
+        if (!sourceDefinition) {
+          return NextResponse.json(
+            { error: `Ebook provider "${selectedEbook.source}" is not implemented` },
+            { status: 400 }
+          );
         }
 
         // Get the request - could be an audiobook request or an existing ebook request
@@ -140,13 +152,13 @@ export async function POST(
         const jobQueue = getJobQueueService();
 
         // Route to appropriate download based on source
-        if (selectedEbook.source === 'annas_archive') {
-          // Anna's Archive: Direct HTTP download
-          await handleAnnasArchiveDownload(
+        if (sourceDefinition.downloadStrategy === 'direct') {
+          await handleDirectEbookDownload(
             ebookRequest.id,
             audiobook,
             selectedEbook,
-            jobQueue
+            jobQueue,
+            sourceDefinition.name
           );
         } else {
           // Indexer: Torrent/NZB download
@@ -160,7 +172,7 @@ export async function POST(
 
         return NextResponse.json({
           success: true,
-          message: `E-book download started from ${selectedEbook.source === 'annas_archive' ? "Anna's Archive" : selectedEbook.indexer}`,
+          message: `E-book download started from ${sourceDefinition.id === EBOOK_SOURCE_IDS.ANNAS_ARCHIVE ? sourceDefinition.name : selectedEbook.indexer}`,
           requestId: ebookRequest.id,
         });
 
@@ -178,23 +190,24 @@ export async function POST(
 /**
  * Handle Anna's Archive download (direct HTTP)
  */
-async function handleAnnasArchiveDownload(
+async function handleDirectEbookDownload(
   requestId: string,
   audiobook: { id: string; title: string; author: string },
   selectedEbook: SelectedEbook,
-  jobQueue: ReturnType<typeof getJobQueueService>
+  jobQueue: ReturnType<typeof getJobQueueService>,
+  sourceName: string
 ) {
   const configService = getConfigService();
   const preferredFormat = await configService.get('ebook_sidecar_preferred_format') || 'epub';
 
-  logger.info(`Starting Anna's Archive download for "${audiobook.title}"`);
-  logger.info(`MD5: ${selectedEbook.md5}, Format: ${selectedEbook.format || preferredFormat}`);
+  logger.info(`Starting ${sourceName} download for "${audiobook.title}"`);
+  logger.info(`Format: ${selectedEbook.format || preferredFormat}`);
 
   // Create download history record
   const downloadHistory = await prisma.downloadHistory.create({
     data: {
       requestId,
-      indexerName: "Anna's Archive",
+      indexerName: sourceName,
       torrentName: `${audiobook.title} - ${audiobook.author}.${selectedEbook.format || preferredFormat}`,
       torrentSizeBytes: null, // Unknown until download starts
       qualityScore: selectedEbook.score,

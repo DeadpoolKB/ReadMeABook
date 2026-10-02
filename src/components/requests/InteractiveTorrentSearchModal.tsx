@@ -28,6 +28,7 @@ import { useReplaceWithTorrent } from '@/lib/hooks/useReportedIssues';
 import { Audiobook } from '@/lib/hooks/useAudiobooks';
 import { fetchWithAuth } from '@/lib/utils/api';
 import { normalizeReleaseKey } from '@/lib/utils/release-key';
+import { EBOOK_SOURCE_IDS } from '@/lib/services/ebook-source-registry';
 
 interface BlockedReleaseLookup {
   /** normalized release key → reason text */
@@ -616,7 +617,7 @@ function ResultRow({
   const score = Math.round(result.score);
   const style = getScoreStyle(score);
   const isUsenet = result.protocol === 'usenet';
-  const isAnnasArchive = isEbookMode && result.source === 'annas_archive';
+  const isAnnasArchive = isEbookMode && result.source === EBOOK_SOURCE_IDS.ANNAS_ARCHIVE;
   const displayFormat = result.format || result.ebookFormat;
   const { tags } = extractTitleTags(result.title);
   const displayFormatLower = (displayFormat ?? '').toLowerCase();

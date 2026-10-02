@@ -2,10 +2,11 @@
  * Component: E-book Settings Tab
  * Documentation: documentation/settings-pages.md
  *
- * Three-section layout:
+ * Source and general settings:
  * 1. Anna's Archive - Direct HTTP downloads from Anna's Archive
- * 2. Indexer Search - Search via Prowlarr indexers (future feature)
- * 3. General Settings - Shared settings like preferred format
+ * 2. Indexer Search - Search via Prowlarr indexers
+ * 3. Additional Source Configuration - Generic provider IDs and mirror URLs
+ * 4. General Settings - Shared settings like preferred format
  */
 
 'use client';
@@ -15,6 +16,12 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useEbookSettings } from './useEbookSettings';
 import type { EbookSettings } from '../../lib/types';
+import {
+  getEbookSourceDefinition,
+  type EbookSourceConfiguration,
+  type EbookSourceSettingField,
+  type EbookSourceSettingValue,
+} from '@/lib/services/ebook-source-registry';
 
 interface EbookTabProps {
   ebook: EbookSettings;
@@ -34,6 +41,40 @@ export function EbookTab({ ebook, onChange, onSuccess, onError, markAsSaved }: E
     saveSettings,
     isAnySourceEnabled,
   } = useEbookSettings({ ebook, onChange, onSuccess, onError, markAsSaved });
+
+  const additionalSources = ebook.additionalSources || [];
+  const updateAdditionalSource = (index: number, updates: Partial<EbookSourceConfiguration>) => {
+    updateEbook(
+      'additionalSources',
+      additionalSources.map((source, sourceIndex) =>
+        sourceIndex === index ? { ...source, ...updates } : source
+      )
+    );
+  };
+
+  const updateSourceSetting = (
+    index: number,
+    key: string,
+    value: EbookSourceSettingValue
+  ) => {
+    const source = additionalSources[index];
+    updateAdditionalSource(index, {
+      settings: { ...source.settings, [key]: value },
+    });
+  };
+
+  const addAdditionalSource = () => {
+    let suffix = 1;
+    let id = `new-source-${suffix}`;
+    while (additionalSources.some((source) => source.id === id)) {
+      suffix += 1;
+      id = `new-source-${suffix}`;
+    }
+    updateEbook('additionalSources', [
+      ...additionalSources,
+      { id, name: 'New ebook source', mirrorUrls: [], preferredMirror: '', settings: {} },
+    ]);
+  };
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -195,6 +236,170 @@ export function EbookTab({ ebook, onChange, onSuccess, onError, markAsSaved }: E
               </p>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Generic configuration for providers added in future code changes */}
+      <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+        <div className="bg-gray-50 dark:bg-gray-800 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
+            Additional Source Configuration
+          </h3>
+        </div>
+        <div className="p-4 space-y-4">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            Add a provider ID, display name, and its mirror URLs for a future source adapter.
+            These entries only store configuration; searching and downloads require a provider implementation.
+          </p>
+
+          {additionalSources.map((source, index) => {
+            const definition = getEbookSourceDefinition(source.id);
+            return (
+            <div key={`${source.id}-${index}`} className="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor={`ebook-source-name-${index}`} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Display name
+                  </label>
+                  <Input
+                    id={`ebook-source-name-${index}`}
+                    value={source.name}
+                    onChange={(event) => updateAdditionalSource(index, { name: event.target.value })}
+                    placeholder="Source name"
+                  />
+                </div>
+                <div>
+                  <label htmlFor={`ebook-source-id-${index}`} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Provider ID
+                  </label>
+                  <Input
+                    id={`ebook-source-id-${index}`}
+                    value={source.id}
+                    onChange={(event) => updateAdditionalSource(index, { id: event.target.value })}
+                    placeholder="lowercase-provider-id"
+                    className="font-mono"
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Lowercase letters, numbers, hyphens, and underscores.
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor={`ebook-source-mirrors-${index}`} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Mirror URLs (one per line)
+                </label>
+                <textarea
+                  id={`ebook-source-mirrors-${index}`}
+                  value={source.mirrorUrls.join('\n')}
+                  onChange={(event) => {
+                    const mirrorUrls = event.target.value.split(/\r?\n/).map((url) => url.trim()).filter(Boolean);
+                    const preferredMirror = mirrorUrls.includes(source.preferredMirror)
+                      ? source.preferredMirror
+                      : mirrorUrls[0] || '';
+                    updateAdditionalSource(index, { mirrorUrls, preferredMirror });
+                  }}
+                  rows={3}
+                  placeholder="https://mirror.example"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                />
+              </div>
+
+              {definition && definition.settingsFields.length > 0 && (
+                <div className="space-y-3 border-t border-gray-200 dark:border-gray-700 pt-3">
+                  {definition.settingsFields.map((field: EbookSourceSettingField) => {
+                    const value = source.settings[field.key];
+                    const inputId = `ebook-source-setting-${index}-${field.key}`;
+                    if (field.type === 'boolean') {
+                      return (
+                        <div key={field.key} className="flex items-center gap-3">
+                          <input
+                            id={inputId}
+                            type="checkbox"
+                            checked={value === true}
+                            onChange={(event) => updateSourceSetting(index, field.key, event.target.checked)}
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <label htmlFor={inputId} className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                            {field.label}
+                          </label>
+                        </div>
+                      );
+                    }
+                    if (field.type === 'select') {
+                      return (
+                        <div key={field.key}>
+                          <label htmlFor={inputId} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            {field.label}
+                          </label>
+                          <select
+                            id={inputId}
+                            value={typeof value === 'string' ? value : ''}
+                            onChange={(event) => updateSourceSetting(index, field.key, event.target.value)}
+                            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                          >
+                            <option value="">Select an option</option>
+                            {field.options.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={field.key}>
+                        <label htmlFor={inputId} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          {field.label}
+                        </label>
+                        <Input
+                          id={inputId}
+                          type={field.type}
+                          value={typeof value === 'string' ? value : ''}
+                          onChange={(event) => updateSourceSetting(index, field.key, event.target.value)}
+                          placeholder={field.secret || field.type === 'password' ? 'Leave blank to keep saved value' : undefined}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="flex items-end gap-3">
+                <div className="flex-1">
+                  <label htmlFor={`ebook-source-preferred-${index}`} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Preferred mirror
+                  </label>
+                  <select
+                    id={`ebook-source-preferred-${index}`}
+                    value={source.preferredMirror}
+                    onChange={(event) => updateAdditionalSource(index, { preferredMirror: event.target.value })}
+                    disabled={source.mirrorUrls.length === 0}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 disabled:opacity-50"
+                  >
+                    <option value="">Select a preferred mirror</option>
+                    {source.mirrorUrls.map((mirror) => (
+                      <option key={mirror} value={mirror}>{mirror}</option>
+                    ))}
+                  </select>
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => updateEbook(
+                    'additionalSources',
+                    additionalSources.filter((_, sourceIndex) => sourceIndex !== index)
+                  )}
+                >
+                  Remove
+                </Button>
+              </div>
+            </div>
+            );
+          })}
+
+          <Button type="button" variant="secondary" onClick={addAdditionalSource}>
+            Add source configuration
+          </Button>
         </div>
       </div>
 

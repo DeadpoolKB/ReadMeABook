@@ -25,7 +25,7 @@ export function useEbookSettings({ ebook, onChange, onSuccess, onError, markAsSa
   /**
    * Update a single ebook field
    */
-  const updateEbook = (field: keyof EbookSettings, value: string | boolean) => {
+  const updateEbook = <Key extends keyof EbookSettings>(field: Key, value: EbookSettings[Key]) => {
     onChange({ ...ebook, [field]: value });
     if (field === 'flaresolverrUrl') {
       setFlaresolverrTestResult(null);
@@ -87,11 +87,13 @@ export function useEbookSettings({ ebook, onChange, onSuccess, onError, markAsSa
           flaresolverrUrl: ebook.flaresolverrUrl || '',
           autoGrabEnabled: ebook.autoGrabEnabled ?? true,
           kindleFixEnabled: ebook.kindleFixEnabled ?? false,
+          additionalSources: ebook.additionalSources || [],
         }),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to save e-book settings');
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || 'Failed to save e-book settings');
       }
 
       onSuccess('E-book sidecar settings saved successfully!');

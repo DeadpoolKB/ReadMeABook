@@ -100,6 +100,16 @@ describe('Admin settings core routes', () => {
       { key: 'plex_url', value: 'http://plex' },
       { key: 'plex_token', value: 'token' },
       { key: 'system.backend_mode', value: 'plex' },
+      {
+        key: 'ebook_additional_sources',
+        value: JSON.stringify([{
+          id: 'future-provider',
+          name: 'Future Provider',
+          mirrorUrls: ['https://mirror.example'],
+          preferredMirror: 'https://mirror.example',
+          settings: {},
+        }]),
+      },
     ]);
     prismaMock.user.count.mockResolvedValueOnce(0);
 
@@ -109,6 +119,66 @@ describe('Admin settings core routes', () => {
 
     expect(payload.plex.url).toBe('http://plex');
     expect(payload.backendMode).toBe('plex');
+    expect(payload.ebook.additionalSources[0].preferredMirror).toBe('https://mirror.example');
+  });
+
+  it('saves additional ebook source mirror configuration', async () => {
+    const request = {
+      json: vi.fn().mockResolvedValue({
+        annasArchiveEnabled: false,
+        indexerSearchEnabled: false,
+        additionalSources: [{
+          id: 'future-provider',
+          name: 'Future Provider',
+          mirrorUrls: ['https://mirror-one.example', 'https://mirror-two.example'],
+          preferredMirror: 'https://mirror-two.example',
+          settings: {},
+        }],
+      }),
+    };
+
+    const { PUT } = await import('@/app/api/admin/settings/ebook/route');
+    const response = await PUT(request as any);
+
+    expect(response.status).toBe(200);
+    expect(configServiceMock.setMany).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'ebook_additional_sources',
+          value: JSON.stringify([{
+            id: 'future-provider',
+            name: 'Future Provider',
+            mirrorUrls: ['https://mirror-one.example', 'https://mirror-two.example'],
+            preferredMirror: 'https://mirror-two.example',
+            settings: {},
+          }]),
+        }),
+      ])
+    );
+  });
+
+  it('rejects invalid additional ebook source mirror URLs', async () => {
+    const request = {
+      json: vi.fn().mockResolvedValue({
+        annasArchiveEnabled: false,
+        indexerSearchEnabled: false,
+        additionalSources: [{
+          id: 'future-provider',
+          name: 'Future Provider',
+          mirrorUrls: ['ftp://mirror.example'],
+          preferredMirror: 'ftp://mirror.example',
+          settings: {},
+        }],
+      }),
+    };
+
+    const { PUT } = await import('@/app/api/admin/settings/ebook/route');
+    const response = await PUT(request as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload.error).toContain('HTTP(S)');
+    expect(configServiceMock.setMany).not.toHaveBeenCalled();
   });
 
   it('updates Plex settings', async () => {
@@ -395,5 +465,3 @@ describe('Admin settings core routes', () => {
     expect(configServiceMock.setMany).toHaveBeenCalled();
   });
 });
-
-

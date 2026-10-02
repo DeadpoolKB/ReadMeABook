@@ -17,6 +17,7 @@ import { groupIndexersByCategories, getGroupDescription } from '../utils/indexer
 import { getLanguageForRegion } from '../constants/language-config';
 import { filterBlockedResults } from '../utils/filter-blocked-results';
 import type { AudibleRegion } from '../types/audible';
+import { EBOOK_SOURCE_IDS } from '../services/ebook-source-registry';
 
 // Import ebook scraper functions for Anna's Archive
 import {
@@ -219,7 +220,7 @@ async function searchAnnasArchive(
     author: audiobook.author,
     format: preferredFormat,
     downloadUrls: slowLinks,
-    source: 'annas_archive',
+    source: EBOOK_SOURCE_IDS.ANNAS_ARCHIVE,
     score: searchMethod === 'asin' ? 100 : 80,
   };
 }
@@ -473,7 +474,7 @@ async function handleAnnasArchiveDownload(
     success: true,
     message: `Found ebook via Anna's Archive, starting download`,
     requestId,
-    source: 'annas_archive',
+    source: EBOOK_SOURCE_IDS.ANNAS_ARCHIVE,
     searchResult: {
       md5: result.md5,
       format: result.format,
@@ -530,7 +531,7 @@ async function handleIndexerDownload(
     success: true,
     message: `Found ebook via indexer search, starting download`,
     requestId,
-    source: 'prowlarr',
+    source: EBOOK_SOURCE_IDS.PROWLARR,
     resultsCount: 1,
     selectedTorrent: {
       title: result.title,
