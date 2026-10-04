@@ -7,21 +7,23 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, requireAdmin, AuthenticatedRequest } from '@/lib/middleware/auth';
+import { requireAuth, AuthenticatedRequest } from '@/lib/middleware/auth';
 import { prisma } from '@/lib/db';
 import { getConfigService } from '@/lib/services/config.service';
-import { getProwlarrService } from '@/lib/integrations/prowlarr.service';
+import { getProwlarrService, Indexer } from '@/lib/integrations/prowlarr.service';
 import { rankEbookTorrents, RankedEbookTorrent } from '@/lib/utils/ranking-algorithm';
-import { groupIndexersByCategories, getGroupDescription } from '@/lib/utils/indexer-grouping';
+import { groupIndexersByCategories } from '@/lib/utils/indexer-grouping';
 import { RMABLogger } from '@/lib/utils/logger';
 import { getLanguageForRegion } from '@/lib/constants/language-config';
+import { generateEbookSelectionToken } from '@/lib/utils/jwt';
 import type { AudibleRegion } from '@/lib/types/audible';
 import {
   searchByAsin,
   searchByTitle,
   getSlowDownloadLinks,
 } from '@/lib/services/ebook-scraper';
-import { EBOOK_SOURCE_IDS, type EbookSourceId } from '@/lib/services/ebook-source-registry';
+import { searchLibgen } from '@/lib/services/ebook-catalog.service';
+import { searchIrcEbooks } from '@/lib/services/irc-ebook.service';
 
 const logger = RMABLogger.create('API.InteractiveSearchEbook');
 
@@ -55,10 +57,11 @@ export interface EbookSearchResult {
   };
 
   // Ebook-specific fields
-  source: EbookSourceId;
+  source: 'annas_archive' | 'prowlarr' | 'libgen' | 'irc';
   format?: string;
   md5?: string;
   downloadUrls?: string[];
+  selectionToken?: string;
 }
 
 export async function POST(
@@ -66,20 +69,32 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   return requireAuth(request, async (req: AuthenticatedRequest) => {
-    return requireAdmin(req, async () => {
       try {
-        const { id: parentRequestId } = await params;
+        if (!req.user) {
+          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+        const userId = req.user.id;
+        const { id: requestId } = await params;
         const body = await request.json().catch(() => ({}));
         const customTitle = body.customTitle as string | undefined;
 
         // Get the request (can be audiobook parent or direct ebook request)
         const requestRecord = await prisma.request.findUnique({
-          where: { id: parentRequestId },
+          where: { id: requestId },
           include: { audiobook: true },
         });
 
         if (!requestRecord) {
           return NextResponse.json({ error: 'Request not found' }, { status: 404 });
+        }
+
+        const isStandaloneEbook = requestRecord.type === 'ebook' && !requestRecord.parentRequestId;
+        if (isStandaloneEbook) {
+          if (!req.user || requestRecord.userId !== req.user.id) {
+            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+          }
+        } else if (req.user?.role !== 'admin') {
+          return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
         }
 
         // Support two flows:
@@ -110,7 +125,7 @@ export async function POST(
         if (isAudiobookSidecar) {
           const existingEbookRequest = await prisma.request.findFirst({
             where: {
-              parentRequestId,
+              parentRequestId: requestId,
               type: 'ebook',
               deletedAt: null,
             },
@@ -126,9 +141,12 @@ export async function POST(
 
         // Get ebook configuration
         const configService = getConfigService();
-        const [annasArchiveEnabled, indexerSearchEnabled, preferredFormat, baseUrl, flaresolverrUrl] = await Promise.all([
+        const [annasArchiveEnabled, indexerSearchEnabled, libgenEnabled, libgenMirrors, ircEnabled, preferredFormat, baseUrl, flaresolverrUrl] = await Promise.all([
           configService.get('ebook_annas_archive_enabled'),
           configService.get('ebook_indexer_search_enabled'),
+          configService.get('ebook_libgen_enabled'),
+          configService.get('ebook_libgen_mirrors'),
+          configService.get('ebook_irc_enabled'),
           configService.get('ebook_sidecar_preferred_format'),
           configService.get('ebook_sidecar_base_url'),
           configService.get('ebook_sidecar_flaresolverr_url'),
@@ -136,6 +154,12 @@ export async function POST(
 
         const isAnnasArchiveEnabled = annasArchiveEnabled === 'true';
         const isIndexerSearchEnabled = indexerSearchEnabled === 'true';
+        const isLibgenEnabled = libgenEnabled === 'true';
+        const isIrcEnabled = ircEnabled === 'true';
+        const libgenMirrorUrls = (libgenMirrors || '')
+          .split(',')
+          .map((url) => url.trim())
+          .filter(Boolean);
         const format = preferredFormat || 'epub';
         const annasBaseUrl = baseUrl || 'https://annas-archive.gl';
 
@@ -144,9 +168,9 @@ export async function POST(
         const langConfig = getLanguageForRegion(region);
         const languageCode = langConfig.annasArchiveLang;
 
-        if (!isAnnasArchiveEnabled && !isIndexerSearchEnabled) {
+        if (!isAnnasArchiveEnabled && !isIndexerSearchEnabled && !isLibgenEnabled && !isIrcEnabled) {
           return NextResponse.json(
-            { error: 'No ebook sources enabled. Enable Anna\'s Archive or Indexer Search in settings.' },
+            { error: 'No ebook sources enabled. Enable Anna\'s Archive, Indexer Search, LibGen, or IRC in settings.' },
             { status: 400 }
           );
         }
@@ -154,7 +178,7 @@ export async function POST(
         const audiobook = requestRecord.audiobook;
         const searchTitle = customTitle || audiobook.title;
 
-        logger.info(`Interactive ebook search for "${searchTitle}" by ${audiobook.author} (${isDirectEbookSearch ? 'direct' : 'sidecar'})`);
+        logger.info(`Interactive ebook search for "${searchTitle}" by ${audiobook.author} (${isStandaloneEbook ? 'standalone' : isDirectEbookSearch ? 'sidecar request' : 'sidecar'})`);
         logger.info(`Sources: Anna's Archive=${isAnnasArchiveEnabled}, Indexer=${isIndexerSearchEnabled}`);
 
         // Search both sources in parallel
@@ -190,6 +214,76 @@ export async function POST(
           );
         }
 
+        if (isLibgenEnabled && libgenMirrorUrls.length > 0) {
+          searchPromises.push(
+            searchLibgen(`${searchTitle} ${audiobook.author}`.trim(), libgenMirrorUrls)
+              .then((releases) => releases.map((release): EbookSearchResult => ({
+                guid: release.guid,
+                title: release.title,
+                size: release.size,
+                seeders: 0,
+                indexer: release.indexer,
+                publishDate: release.publishDate,
+                downloadUrl: release.downloadUrl,
+                infoUrl: release.infoUrl,
+                score: release.score,
+                finalScore: release.finalScore,
+                bonusPoints: 0,
+                bonusModifiers: [],
+                rank: 0,
+                breakdown: {
+                  formatScore: 10,
+                  sizeScore: 15,
+                  seederScore: 0,
+                  matchScore: 60,
+                  totalScore: 85,
+                  notes: ['LibGen catalog result'],
+                },
+                source: 'libgen',
+                format: release.format,
+                md5: release.md5,
+              })))
+              .catch((err) => {
+                logger.error(`LibGen search failed: ${err instanceof Error ? err.message : String(err)}`);
+                return null;
+              })
+          );
+        }
+
+        if (isIrcEnabled) {
+          searchPromises.push(
+            searchIrcEbooks(`${searchTitle} ${audiobook.author}`.trim())
+              .then((releases) => releases.map((release): EbookSearchResult => ({
+                guid: release.guid,
+                title: release.title,
+                size: release.size,
+                seeders: 0,
+                indexer: release.indexer,
+                publishDate: release.publishDate,
+                downloadUrl: release.downloadUrl,
+                score: release.score,
+                finalScore: release.finalScore,
+                bonusPoints: 0,
+                bonusModifiers: [],
+                rank: 0,
+                breakdown: {
+                  formatScore: 10,
+                  sizeScore: 15,
+                  seederScore: 0,
+                  matchScore: 60,
+                  totalScore: 85,
+                  notes: ['IRC DCC result'],
+                },
+                source: 'irc',
+                format: release.format,
+              })))
+              .catch((err) => {
+                logger.error(`IRC search failed: ${err instanceof Error ? err.message : String(err)}`);
+                return null;
+              })
+          );
+        }
+
         const searchResults = await Promise.all(searchPromises);
 
         // Combine results: Anna's Archive first (if found), then ranked indexer results
@@ -213,10 +307,28 @@ export async function POST(
           }
         }
 
+        const libgenResultsIndex = (isAnnasArchiveEnabled ? 1 : 0) + (isIndexerSearchEnabled ? 1 : 0);
+        if (isLibgenEnabled && searchResults[libgenResultsIndex]) {
+          const libgenResults = searchResults[libgenResultsIndex];
+          for (const result of libgenResults) {
+            combinedResults.push({ ...result, rank: rank++ });
+          }
+        }
+
+        const ircResultsIndex = libgenResultsIndex + (isLibgenEnabled && libgenMirrorUrls.length > 0 ? 1 : 0);
+        if (isIrcEnabled && searchResults[ircResultsIndex]) {
+          for (const result of searchResults[ircResultsIndex]) {
+            combinedResults.push({ ...result, rank: rank++ });
+          }
+        }
+
         logger.info(`Found ${combinedResults.length} total ebook results`);
 
         return NextResponse.json({
-          results: combinedResults,
+          results: combinedResults.map((result) => ({
+            ...result,
+            selectionToken: generateEbookSelectionToken(userId, requestId, result),
+          })),
           searchTitle,
           preferredFormat: format,
         });
@@ -228,7 +340,6 @@ export async function POST(
           { status: 500 }
         );
       }
-    });
   });
 }
 
@@ -306,7 +417,7 @@ async function searchAnnasArchiveForInteractive(
       notes: [searchMethod === 'asin' ? 'ASIN match' : 'Title/Author match', "Anna's Archive"],
     },
 
-    source: EBOOK_SOURCE_IDS.ANNAS_ARCHIVE,
+    source: 'annas_archive',
     format: preferredFormat,
     md5,
     downloadUrls: slowLinks,
@@ -330,7 +441,7 @@ async function searchIndexersForInteractive(
     return [];
   }
 
-  const indexersConfig = JSON.parse(indexersConfigStr);
+  const indexersConfig: Indexer[] = JSON.parse(indexersConfigStr);
   if (indexersConfig.length === 0) {
     logger.warn('No indexers enabled');
     return [];
@@ -338,7 +449,7 @@ async function searchIndexersForInteractive(
 
   // Build indexer priorities map
   const indexerPriorities = new Map<number, number>(
-    indexersConfig.map((indexer: any) => [indexer.id, indexer.priority ?? 10])
+    indexersConfig.map((indexer) => [indexer.id, indexer.priority ?? 10])
   );
 
   // Get flag configurations
@@ -459,7 +570,7 @@ async function searchIndexersForInteractive(
     rank: result.rank,
     breakdown: result.breakdown,
 
-    source: EBOOK_SOURCE_IDS.PROWLARR,
+    source: 'prowlarr',
     format: result.ebookFormat,
     protocol: result.protocol,
   }));

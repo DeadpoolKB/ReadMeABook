@@ -2,11 +2,11 @@
  * Component: E-book Settings Tab
  * Documentation: documentation/settings-pages.md
  *
- * Source and general settings:
+ * Three-section layout:
  * 1. Anna's Archive - Direct HTTP downloads from Anna's Archive
  * 2. Indexer Search - Search via Prowlarr indexers
- * 3. Additional Source Configuration - Generic provider IDs and mirror URLs
- * 4. General Settings - Shared settings like preferred format
+ * 3. LibGen - Search configured LibGen mirrors
+ * 3. General Settings - Shared settings like preferred format
  */
 
 'use client';
@@ -16,12 +16,6 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useEbookSettings } from './useEbookSettings';
 import type { EbookSettings } from '../../lib/types';
-import {
-  getEbookSourceDefinition,
-  type EbookSourceConfiguration,
-  type EbookSourceSettingField,
-  type EbookSourceSettingValue,
-} from '@/lib/services/ebook-source-registry';
 
 interface EbookTabProps {
   ebook: EbookSettings;
@@ -40,41 +34,8 @@ export function EbookTab({ ebook, onChange, onSuccess, onError, markAsSaved }: E
     testFlaresolverrConnection,
     saveSettings,
     isAnySourceEnabled,
+    isAutoGrabSupported,
   } = useEbookSettings({ ebook, onChange, onSuccess, onError, markAsSaved });
-
-  const additionalSources = ebook.additionalSources || [];
-  const updateAdditionalSource = (index: number, updates: Partial<EbookSourceConfiguration>) => {
-    updateEbook(
-      'additionalSources',
-      additionalSources.map((source, sourceIndex) =>
-        sourceIndex === index ? { ...source, ...updates } : source
-      )
-    );
-  };
-
-  const updateSourceSetting = (
-    index: number,
-    key: string,
-    value: EbookSourceSettingValue
-  ) => {
-    const source = additionalSources[index];
-    updateAdditionalSource(index, {
-      settings: { ...source.settings, [key]: value },
-    });
-  };
-
-  const addAdditionalSource = () => {
-    let suffix = 1;
-    let id = `new-source-${suffix}`;
-    while (additionalSources.some((source) => source.id === id)) {
-      suffix += 1;
-      id = `new-source-${suffix}`;
-    }
-    updateEbook('additionalSources', [
-      ...additionalSources,
-      { id, name: 'New ebook source', mirrorUrls: [], preferredMirror: '', settings: {} },
-    ]);
-  };
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -95,7 +56,7 @@ export function EbookTab({ ebook, onChange, onSuccess, onError, markAsSaved }: E
       <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
         <div className="bg-gray-50 dark:bg-gray-800 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
           <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
-            Anna's Archive
+            Anna&apos;s Archive
           </h3>
         </div>
         <div className="p-4 space-y-4">
@@ -113,15 +74,15 @@ export function EbookTab({ ebook, onChange, onSuccess, onError, markAsSaved }: E
                 htmlFor="annas-archive-enabled"
                 className="block text-sm font-medium text-gray-900 dark:text-gray-100 cursor-pointer"
               >
-                Enable Anna's Archive downloads
+                Enable Anna&apos;s Archive downloads
               </label>
               <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                Download e-books directly from Anna's Archive using ASIN or title matching.
+                Download e-books directly from Anna&apos;s Archive using ASIN or title matching.
               </p>
             </div>
           </div>
 
-          {/* Anna's Archive specific settings - only shown when enabled */}
+          {/* Anna&apos;s Archive specific settings - only shown when enabled */}
           {ebook.annasArchiveEnabled && (
             <>
               {/* Base URL */}
@@ -137,7 +98,7 @@ export function EbookTab({ ebook, onChange, onSuccess, onError, markAsSaved }: E
                   className="font-mono"
                 />
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  Change this if the primary Anna's Archive mirror is unavailable.
+                  Change this if the primary Anna&apos;s Archive mirror is unavailable.
                 </p>
               </div>
 
@@ -183,7 +144,7 @@ export function EbookTab({ ebook, onChange, onSuccess, onError, markAsSaved }: E
                 {!ebook.flaresolverrUrl && (
                   <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
                     <p className="text-sm text-amber-800 dark:text-amber-200">
-                      <strong>Note:</strong> Without FlareSolverr, e-book downloads may fail if Anna's Archive
+                      <strong>Note:</strong> Without FlareSolverr, e-book downloads may fail if Anna&apos;s Archive
                       has Cloudflare protection enabled.
                     </p>
                   </div>
@@ -231,7 +192,7 @@ export function EbookTab({ ebook, onChange, onSuccess, onError, markAsSaved }: E
             <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
               <p className="text-sm text-blue-800 dark:text-blue-200">
                 <strong>Configure Categories:</strong> E-book category settings are configured per-indexer
-                in the <span className="font-medium">Indexers</span> tab. Look for the "EBook" tab when
+                in the <span className="font-medium">Indexers</span> tab. Look for the &quot;EBook&quot; tab when
                 editing an indexer.
               </p>
             </div>
@@ -239,167 +200,108 @@ export function EbookTab({ ebook, onChange, onSuccess, onError, markAsSaved }: E
         </div>
       </div>
 
-      {/* Generic configuration for providers added in future code changes */}
       <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
         <div className="bg-gray-50 dark:bg-gray-800 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
           <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
-            Additional Source Configuration
+            LibGen
           </h3>
         </div>
         <div className="p-4 space-y-4">
-          <p className="text-sm text-gray-600 dark:text-gray-400">
-            Add a provider ID, display name, and its mirror URLs for a future source adapter.
-            These entries only store configuration; searching and downloads require a provider implementation.
-          </p>
-
-          {additionalSources.map((source, index) => {
-            const definition = getEbookSourceDefinition(source.id);
-            return (
-            <div key={`${source.id}-${index}`} className="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label htmlFor={`ebook-source-name-${index}`} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Display name
-                  </label>
-                  <Input
-                    id={`ebook-source-name-${index}`}
-                    value={source.name}
-                    onChange={(event) => updateAdditionalSource(index, { name: event.target.value })}
-                    placeholder="Source name"
-                  />
-                </div>
-                <div>
-                  <label htmlFor={`ebook-source-id-${index}`} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Provider ID
-                  </label>
-                  <Input
-                    id={`ebook-source-id-${index}`}
-                    value={source.id}
-                    onChange={(event) => updateAdditionalSource(index, { id: event.target.value })}
-                    placeholder="lowercase-provider-id"
-                    className="font-mono"
-                  />
-                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    Lowercase letters, numbers, hyphens, and underscores.
-                  </p>
-                </div>
-              </div>
-
-              <div>
-                <label htmlFor={`ebook-source-mirrors-${index}`} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Mirror URLs (one per line)
-                </label>
-                <textarea
-                  id={`ebook-source-mirrors-${index}`}
-                  value={source.mirrorUrls.join('\n')}
-                  onChange={(event) => {
-                    const mirrorUrls = event.target.value.split(/\r?\n/).map((url) => url.trim()).filter(Boolean);
-                    const preferredMirror = mirrorUrls.includes(source.preferredMirror)
-                      ? source.preferredMirror
-                      : mirrorUrls[0] || '';
-                    updateAdditionalSource(index, { mirrorUrls, preferredMirror });
-                  }}
-                  rows={3}
-                  placeholder="https://mirror.example"
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
-                />
-              </div>
-
-              {definition && definition.settingsFields.length > 0 && (
-                <div className="space-y-3 border-t border-gray-200 dark:border-gray-700 pt-3">
-                  {definition.settingsFields.map((field: EbookSourceSettingField) => {
-                    const value = source.settings[field.key];
-                    const inputId = `ebook-source-setting-${index}-${field.key}`;
-                    if (field.type === 'boolean') {
-                      return (
-                        <div key={field.key} className="flex items-center gap-3">
-                          <input
-                            id={inputId}
-                            type="checkbox"
-                            checked={value === true}
-                            onChange={(event) => updateSourceSetting(index, field.key, event.target.checked)}
-                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                          />
-                          <label htmlFor={inputId} className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                            {field.label}
-                          </label>
-                        </div>
-                      );
-                    }
-                    if (field.type === 'select') {
-                      return (
-                        <div key={field.key}>
-                          <label htmlFor={inputId} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                            {field.label}
-                          </label>
-                          <select
-                            id={inputId}
-                            value={typeof value === 'string' ? value : ''}
-                            onChange={(event) => updateSourceSetting(index, field.key, event.target.value)}
-                            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
-                          >
-                            <option value="">Select an option</option>
-                            {field.options.map((option) => (
-                              <option key={option.value} value={option.value}>{option.label}</option>
-                            ))}
-                          </select>
-                        </div>
-                      );
-                    }
-                    return (
-                      <div key={field.key}>
-                        <label htmlFor={inputId} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                          {field.label}
-                        </label>
-                        <Input
-                          id={inputId}
-                          type={field.type}
-                          value={typeof value === 'string' ? value : ''}
-                          onChange={(event) => updateSourceSetting(index, field.key, event.target.value)}
-                          placeholder={field.secret || field.type === 'password' ? 'Leave blank to keep saved value' : undefined}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              <div className="flex items-end gap-3">
-                <div className="flex-1">
-                  <label htmlFor={`ebook-source-preferred-${index}`} className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Preferred mirror
-                  </label>
-                  <select
-                    id={`ebook-source-preferred-${index}`}
-                    value={source.preferredMirror}
-                    onChange={(event) => updateAdditionalSource(index, { preferredMirror: event.target.value })}
-                    disabled={source.mirrorUrls.length === 0}
-                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 disabled:opacity-50"
-                  >
-                    <option value="">Select a preferred mirror</option>
-                    {source.mirrorUrls.map((mirror) => (
-                      <option key={mirror} value={mirror}>{mirror}</option>
-                    ))}
-                  </select>
-                </div>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => updateEbook(
-                    'additionalSources',
-                    additionalSources.filter((_, sourceIndex) => sourceIndex !== index)
-                  )}
-                >
-                  Remove
-                </Button>
-              </div>
+          <div className="flex items-start gap-4">
+            <input
+              type="checkbox"
+              id="libgen-enabled"
+              checked={ebook.libgenEnabled || false}
+              onChange={(event) => updateEbook('libgenEnabled', event.target.checked)}
+              className="mt-1 h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <div className="flex-1">
+              <label htmlFor="libgen-enabled" className="block text-sm font-medium text-gray-900 dark:text-gray-100 cursor-pointer">
+                Enable LibGen catalog search
+              </label>
+              <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                Searches the configured LibGen mirrors directly and downloads selected files over HTTP.
+              </p>
             </div>
-            );
-          })}
+          </div>
+          {ebook.libgenEnabled && (
+            <div>
+              <label htmlFor="libgen-mirrors" className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Mirror URLs (comma-separated)
+              </label>
+              <Input
+                id="libgen-mirrors"
+                type="text"
+                value={ebook.libgenMirrors || ''}
+                onChange={(event) => updateEbook('libgenMirrors', event.target.value)}
+                placeholder="https://libgen.li"
+                className="font-mono"
+              />
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                Enter one or more mirror base URLs. No mirror is assumed or contacted until configured.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
 
-          <Button type="button" variant="secondary" onClick={addAdditionalSource}>
-            Add source configuration
-          </Button>
+      <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+        <div className="bg-gray-50 dark:bg-gray-800 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
+            IRC (DCC)
+          </h3>
+        </div>
+        <div className="p-4 space-y-4">
+          <div className="flex items-start gap-4">
+            <input
+              type="checkbox"
+              id="irc-enabled"
+              checked={ebook.ircEnabled || false}
+              onChange={(event) => updateEbook('ircEnabled', event.target.checked)}
+              className="mt-1 h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <div className="flex-1">
+              <label htmlFor="irc-enabled" className="block text-sm font-medium text-gray-900 dark:text-gray-100 cursor-pointer">
+                Enable IRC ebook search and DCC downloads
+              </label>
+              <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                IRC search and DCC file transfers require outbound connections to the server and public DCC endpoints.
+              </p>
+            </div>
+          </div>
+          {ebook.ircEnabled && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="irc-server" className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Server</label>
+                <Input id="irc-server" value={ebook.ircServer || ''} onChange={(event) => updateEbook('ircServer', event.target.value)} placeholder="irc.example.net" />
+              </div>
+              <div>
+                <label htmlFor="irc-port" className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Port</label>
+                <Input id="irc-port" type="number" min="1" max="65535" value={ebook.ircPort || '6697'} onChange={(event) => updateEbook('ircPort', event.target.value)} />
+              </div>
+              <div>
+                <label htmlFor="irc-channel" className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Channel</label>
+                <Input id="irc-channel" value={ebook.ircChannel || ''} onChange={(event) => updateEbook('ircChannel', event.target.value)} placeholder="ebooks" />
+              </div>
+              <div>
+                <label htmlFor="irc-nick" className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Nickname</label>
+                <Input id="irc-nick" value={ebook.ircNick || ''} onChange={(event) => updateEbook('ircNick', event.target.value)} placeholder="readmeabook" />
+              </div>
+              <div>
+                <label htmlFor="irc-search-bot" className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Search bot</label>
+                <Input id="irc-search-bot" value={ebook.ircSearchBot || ''} onChange={(event) => updateEbook('ircSearchBot', event.target.value)} placeholder="search" />
+              </div>
+              <label className="flex items-center gap-3 text-sm font-medium text-gray-700 dark:text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={ebook.ircTls ?? true}
+                  onChange={(event) => updateEbook('ircTls', event.target.checked)}
+                  className="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                Use TLS
+              </label>
+            </div>
+          )}
         </div>
       </div>
 
@@ -433,7 +335,7 @@ export function EbookTab({ ebook, onChange, onSuccess, onError, markAsSaved }: E
                 <option value="any">Any format</option>
               </select>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                EPUB is recommended for most e-readers. "Any format" accepts the first available.
+                EPUB is recommended for most e-readers. &quot;Any format&quot; accepts the first available.
               </p>
             </div>
 
@@ -443,6 +345,7 @@ export function EbookTab({ ebook, onChange, onSuccess, onError, markAsSaved }: E
                 type="checkbox"
                 id="auto-grab-enabled"
                 checked={ebook.autoGrabEnabled ?? true}
+                disabled={!isAutoGrabSupported}
                 onChange={(e) => updateEbook('autoGrabEnabled', e.target.checked)}
                 className="mt-1 h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
@@ -455,8 +358,13 @@ export function EbookTab({ ebook, onChange, onSuccess, onError, markAsSaved }: E
                 </label>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
                   When enabled, ebook requests are created automatically after audiobook downloads complete.
-                  When disabled, use the "Fetch Ebook" button on completed requests.
+                  When disabled, use the &quot;Fetch Ebook&quot; button on completed requests.
                 </p>
+                {!isAutoGrabSupported && (
+                  <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">
+                    Automatic sidecar searches currently use Anna&apos;s Archive and Prowlarr only. LibGen and IRC remain available for interactive searches.
+                  </p>
+                )}
               </div>
             </div>
 
@@ -493,7 +401,7 @@ export function EbookTab({ ebook, onChange, onSuccess, onError, markAsSaved }: E
       {ebook.annasArchiveEnabled && (
         <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
           <h3 className="text-sm font-semibold text-blue-900 dark:text-blue-100 mb-2">
-            How Anna's Archive works
+            How Anna&apos;s Archive works
           </h3>
           <ul className="space-y-1 text-sm text-blue-800 dark:text-blue-200">
             <li>• Searches by ASIN first (exact match), then title + author</li>

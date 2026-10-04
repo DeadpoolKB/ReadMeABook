@@ -20,7 +20,6 @@ import { TorrentResult } from '@/lib/utils/ranking-algorithm';
 import { InformationCircleIcon } from '@heroicons/react/24/outline';
 import { formatDistanceToNow } from 'date-fns';
 import { useState } from 'react';
-import { EBOOK_SOURCE_IDS } from '@/lib/services/ebook-source-registry';
 
 interface SelectedTorrentData {
   title?: string;
@@ -224,7 +223,7 @@ function PendingApprovalSection({ requests }: { requests: PendingApprovalRequest
           const isLoading = loadingStates[request.id] || false;
           const torrent = request.selectedTorrent;
           const displayFormat = torrent?.format || torrent?.ebookFormat;
-          const isAnnasArchive = torrent?.source === EBOOK_SOURCE_IDS.ANNAS_ARCHIVE;
+          const isAnnasArchive = torrent?.source === 'annas_archive';
 
           return (
             <div

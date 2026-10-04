@@ -6,8 +6,6 @@
 /**
  * Main settings object structure
  */
-import type { EbookSourceConfiguration } from '@/lib/services/ebook-source-registry';
-
 export interface Settings {
   backendMode: 'plex' | 'audiobookshelf';
   hasLocalUsers: boolean;
@@ -125,12 +123,21 @@ export interface PathsSettings {
 
 /**
  * E-book sidecar configuration
- * Supports two sources: Anna's Archive (direct HTTP) and Indexer Search (Prowlarr)
+ * Ebook sources: Anna's Archive, Prowlarr indexers, and configured LibGen mirrors
  */
 export interface EbookSettings {
   // Source toggles
   annasArchiveEnabled: boolean;
   indexerSearchEnabled: boolean;
+  libgenEnabled: boolean;
+  libgenMirrors: string;
+  ircEnabled: boolean;
+  ircServer: string;
+  ircPort: string;
+  ircTls: boolean;
+  ircChannel: string;
+  ircNick: string;
+  ircSearchBot: string;
   // Anna's Archive specific settings
   baseUrl: string;
   flaresolverrUrl: string;
@@ -139,8 +146,6 @@ export interface EbookSettings {
   autoGrabEnabled: boolean;
   // Kindle compatibility
   kindleFixEnabled: boolean;
-  // Generic configuration for providers added in the future
-  additionalSources: EbookSourceConfiguration[];
 }
 
 /**
