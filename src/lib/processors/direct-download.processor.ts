@@ -16,6 +16,7 @@ import { RMAB_USER_AGENT } from '../utils/user-agent';
 import fs from 'fs/promises';
 import { createWriteStream } from 'fs';
 import path from 'path';
+import { downloadIrcEbook } from '../services/irc-ebook.service';
 
 const DOWNLOAD_TIMEOUT_MS = 120000; // 2 minutes per download attempt
 const MAX_DOWNLOAD_ATTEMPTS = 5;
@@ -50,7 +51,7 @@ function generateDownloadId(): string {
  * Initiates the HTTP download and schedules monitoring
  */
 export async function processStartDirectDownload(payload: StartDirectDownloadPayload): Promise<any> {
-  const { requestId, downloadHistoryId, downloadUrl, targetFilename, expectedSize, jobId } = payload;
+  const { requestId, downloadHistoryId, downloadUrl, targetFilename, expectedSize, jobId, skipUrlExtraction, referer } = payload;
 
   const logger = RMABLogger.forJob(jobId, 'DirectDownload');
 
@@ -103,22 +104,41 @@ export async function processStartDirectDownload(payload: StartDirectDownloadPay
       success: false,
       error: 'No download URLs available',
     };
-
     const attemptsLimit = Math.min(downloadUrls.length, MAX_DOWNLOAD_ATTEMPTS);
 
-    for (let i = 0; i < attemptsLimit; i++) {
+    if (downloadHistory?.indexerName?.startsWith('IRC:')) {
+      const format = path.extname(targetFilename).slice(1) || preferredFormat;
+      const sanitizedFilename = sanitizeFilename(targetFilename);
+      const targetPath = path.join(downloadsDir, sanitizedFilename);
+      const dirChmodStr = await configService.get('dir_chmod') || '775';
+      await fs.mkdir(path.dirname(targetPath), { recursive: true, mode: parseInt(dirChmodStr, 8) });
+      let lastProgressUpdate = 0;
+      await downloadIrcEbook(downloadUrl, targetPath, async (progress) => {
+        const now = Date.now();
+        if (progress < 100 && now - lastProgressUpdate < PROGRESS_UPDATE_INTERVAL_MS) return;
+        lastProgressUpdate = now;
+        await prisma.request.update({
+          where: { id: requestId },
+          data: { progress: Math.min(progress, 99), updatedAt: new Date() },
+        });
+      });
+      downloadResult = { success: true, filePath: targetPath, format };
+    } else {
+      for (let i = 0; i < attemptsLimit; i++) {
       const slowLink = downloadUrls[i];
       logger.info(`Attempting download link ${i + 1}/${attemptsLimit}...`);
 
       try {
         // Extract actual download URL from slow download page
-        const extracted = await extractDownloadUrl(
-          slowLink,
-          baseUrl,
-          preferredFormat,
-          logger,
-          flaresolverrUrl
-        );
+        const extracted = skipUrlExtraction
+          ? { url: slowLink, format: path.extname(targetFilename).slice(1) || preferredFormat } satisfies ExtractedDownload
+          : await extractDownloadUrl(
+              slowLink,
+              baseUrl,
+              preferredFormat,
+              logger,
+              flaresolverrUrl
+            );
 
         if (!extracted) {
           logger.warn(`No download URL found on page ${i + 1}`);
@@ -152,7 +172,8 @@ export async function processStartDirectDownload(payload: StartDirectDownloadPay
           extracted.url,
           targetPath,
           downloadEntry,
-          logger
+          logger,
+          referer
         );
 
         if (success) {
@@ -179,6 +200,7 @@ export async function processStartDirectDownload(payload: StartDirectDownloadPay
         activeDownloads.delete(downloadId);
       } catch (error) {
         logger.warn(`Download link ${i + 1} error: ${error instanceof Error ? error.message : 'Unknown'}`);
+      }
       }
     }
 
@@ -287,7 +309,8 @@ async function downloadFileWithProgress(
   url: string,
   targetPath: string,
   tracking: ActiveDownload,
-  logger: RMABLogger
+  logger: RMABLogger,
+  referer?: string
 ): Promise<boolean> {
   try {
     // Ensure target directory exists with configured permissions
@@ -304,6 +327,7 @@ async function downloadFileWithProgress(
       timeout: DOWNLOAD_TIMEOUT_MS,
       headers: {
         'User-Agent': RMAB_USER_AGENT,
+        ...(referer ? { Referer: referer } : {}),
       },
     });
 

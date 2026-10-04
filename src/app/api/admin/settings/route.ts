@@ -7,11 +7,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth, requireAdmin, AuthenticatedRequest } from '@/lib/middleware/auth';
 import { prisma } from '@/lib/db';
 import { RMABLogger } from '@/lib/utils/logger';
-import {
-  maskEbookSourceConfigurationSecrets,
-  validateEbookSourceConfigurations,
-  type EbookSourceConfiguration,
-} from '@/lib/services/ebook-source-registry';
 
 const logger = RMABLogger.create('API.Admin.Settings');
 
@@ -22,15 +17,6 @@ export async function GET(request: NextRequest) {
         // Fetch all configuration
     const configs = await prisma.configuration.findMany();
     const configMap = new Map(configs.map((c) => [c.key, c.value]));
-    const sourceConfigsValue = configMap.get('ebook_additional_sources');
-    let additionalEbookSources: EbookSourceConfiguration[] = [];
-    if (sourceConfigsValue) {
-      const validation = validateEbookSourceConfigurations(JSON.parse(sourceConfigsValue));
-      if (!validation.valid) {
-        throw new Error(`Invalid stored ebook source settings: ${validation.error}`);
-      }
-      additionalEbookSources = maskEbookSourceConfigurationSecrets(validation.configs);
-    }
 
     // Check if any local users exist (for validation)
     const hasLocalUsers = (await prisma.user.count({
@@ -160,6 +146,15 @@ export async function GET(request: NextRequest) {
           // Migration: if old key is true and new key doesn't exist, use old value
           (configMap.get('ebook_annas_archive_enabled') === undefined && configMap.get('ebook_sidecar_enabled') === 'true'),
         indexerSearchEnabled: configMap.get('ebook_indexer_search_enabled') === 'true',
+        libgenEnabled: configMap.get('ebook_libgen_enabled') === 'true',
+        libgenMirrors: configMap.get('ebook_libgen_mirrors') || '',
+        ircEnabled: configMap.get('ebook_irc_enabled') === 'true',
+        ircServer: configMap.get('ebook_irc_server') || '',
+        ircPort: configMap.get('ebook_irc_port') || '6697',
+        ircTls: configMap.get('ebook_irc_tls') !== 'false',
+        ircChannel: configMap.get('ebook_irc_channel') || '',
+        ircNick: configMap.get('ebook_irc_nick') || '',
+        ircSearchBot: configMap.get('ebook_irc_search_bot') || '',
         // Anna's Archive specific settings
         baseUrl: configMap.get('ebook_sidecar_base_url') || 'https://annas-archive.gl',
         flaresolverrUrl: configMap.get('ebook_sidecar_flaresolverr_url') || '',
@@ -169,7 +164,6 @@ export async function GET(request: NextRequest) {
         autoGrabEnabled: configMap.get('ebook_auto_grab_enabled') !== 'false',
         // Kindle compatibility fixes: default false
         kindleFixEnabled: configMap.get('ebook_kindle_fix_enabled') === 'true',
-        additionalSources: additionalEbookSources,
       },
       general: {
         appName: configMap.get('app_name') || 'ReadMeABook',

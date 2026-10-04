@@ -30,7 +30,6 @@ const baseEbook = {
   preferredFormat: 'epub',
   baseUrl: 'https://annas-archive.gl',
   flaresolverrUrl: 'http://flare',
-  additionalSources: [],
 };
 
 describe('useEbookSettings', () => {
@@ -128,8 +127,6 @@ describe('useEbookSettings', () => {
 
     expect(onSuccess).toHaveBeenCalledWith('E-book sidecar settings saved successfully!');
     expect(markAsSaved).toHaveBeenCalled();
-    const savedPayload = JSON.parse(fetchWithAuthMock.mock.calls[0][1].body);
-    expect(savedPayload.additionalSources).toEqual([]);
 
     act(() => {
       vi.advanceTimersByTime(3000);

@@ -25,7 +25,7 @@ export function useEbookSettings({ ebook, onChange, onSuccess, onError, markAsSa
   /**
    * Update a single ebook field
    */
-  const updateEbook = <Key extends keyof EbookSettings>(field: Key, value: EbookSettings[Key]) => {
+  const updateEbook = (field: keyof EbookSettings, value: string | boolean) => {
     onChange({ ...ebook, [field]: value });
     if (field === 'flaresolverrUrl') {
       setFlaresolverrTestResult(null);
@@ -82,18 +82,25 @@ export function useEbookSettings({ ebook, onChange, onSuccess, onError, markAsSa
         body: JSON.stringify({
           annasArchiveEnabled: ebook.annasArchiveEnabled || false,
           indexerSearchEnabled: ebook.indexerSearchEnabled || false,
+          libgenEnabled: ebook.libgenEnabled || false,
+          libgenMirrors: ebook.libgenMirrors || '',
+          ircEnabled: ebook.ircEnabled || false,
+          ircServer: ebook.ircServer || '',
+          ircPort: ebook.ircPort || '6697',
+          ircTls: ebook.ircTls ?? true,
+          ircChannel: ebook.ircChannel || '',
+          ircNick: ebook.ircNick || '',
+          ircSearchBot: ebook.ircSearchBot || '',
           format: ebook.preferredFormat || 'epub',
           baseUrl: ebook.baseUrl || 'https://annas-archive.gl',
           flaresolverrUrl: ebook.flaresolverrUrl || '',
           autoGrabEnabled: ebook.autoGrabEnabled ?? true,
           kindleFixEnabled: ebook.kindleFixEnabled ?? false,
-          additionalSources: ebook.additionalSources || [],
         }),
       });
 
       if (!response.ok) {
-        const result = await response.json().catch(() => ({}));
-        throw new Error(result.error || 'Failed to save e-book settings');
+        throw new Error('Failed to save e-book settings');
       }
 
       onSuccess('E-book sidecar settings saved successfully!');
@@ -109,7 +116,8 @@ export function useEbookSettings({ ebook, onChange, onSuccess, onError, markAsSa
   /**
    * Helper to check if any ebook source is enabled
    */
-  const isAnySourceEnabled = ebook.annasArchiveEnabled || ebook.indexerSearchEnabled;
+  const isAnySourceEnabled = ebook.annasArchiveEnabled || ebook.indexerSearchEnabled || ebook.libgenEnabled || ebook.ircEnabled;
+  const isAutoGrabSupported = ebook.annasArchiveEnabled || ebook.indexerSearchEnabled;
 
   return {
     saving,
@@ -119,5 +127,6 @@ export function useEbookSettings({ ebook, onChange, onSuccess, onError, markAsSa
     testFlaresolverrConnection,
     saveSettings,
     isAnySourceEnabled,
+    isAutoGrabSupported,
   };
 }

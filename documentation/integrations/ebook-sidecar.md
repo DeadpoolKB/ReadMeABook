@@ -1,9 +1,18 @@
 # E-book Support
 
-**Status:** ✅ Implemented | First-class ebook requests with Anna's Archive + Indexer Search and an extensible provider configuration scaffold
+**Status:** ✅ Implemented | Audiobook sidecars plus standalone catalog search and ebook requests
 
 ## Overview
-Ebooks are first-class citizens in RMAB, with their own request type, tracking, and UI representation. When an audiobook request completes, an ebook request is automatically created (if a source is enabled). Implemented sources are Anna's Archive (direct HTTP) and Indexer Search (via Prowlarr with ebook categories); generic additional-source settings are configuration-only until a provider adapter is implemented.
+Ebooks are first-class citizens in RMAB, with their own request type, tracking, and UI representation. Ebooks can be requested as audiobook sidecars or searched independently by catalog metadata. Interactive releases come from Anna's Archive, configured Prowlarr indexers (including Newznab-compatible indexers configured in Prowlarr), configured LibGen mirrors, and IRC bots using DCC.
+
+## Standalone Catalog Search
+- `/ebooks` searches the Open Library catalog and displays normalized book metadata, including ISBNs when available.
+- Selecting a catalog result creates/reuses an ebook request linked to its catalog identity, not an Audible ASIN; selecting a release queues the existing HTTP or torrent/Usenet download and organization workers.
+- Standalone ebook records still use RMAB's `Audiobook` metadata row to preserve the `Request.audiobookId` contract. Their Audible ASIN remains unset; request `type` is `ebook` and `parentRequestId` is null.
+- Existing `/search` Audible results, audiobook-linked ebook sidecars, approval/ownership checks, and ebook organization behavior remain unchanged.
+- Release selection reuses RMAB's Anna's Archive direct-download and Prowlarr torrent/Usenet paths, adds LibGen catalog search with direct HTTP downloads, and supports IRC searches and DCC transfers. Newznab-compatible indexers can be used through Prowlarr when configured there.
+- LibGen mirrors and IRC connection details must be entered in Admin Settings → E-book Sidecar. IRC DCC needs network access to public transfer endpoints; private, loopback, link-local, and reserved IPv4 endpoints are rejected.
+- AudiobookBay is audiobook-only and is not queried for ebooks.
 
 ## Key Details
 
@@ -16,23 +25,13 @@ Ebooks are first-class citizens in RMAB, with their own request type, tracking, 
 
 ### Source Priority
 1. **Anna's Archive** (if enabled) - Direct HTTP downloads
-   - Searched first via ASIN, then exact author + title
-   - If no result, retries with title-only search in the preferred format, then any format
+   - Searched first via ASIN, then title + author
    - Uses FlareSolverr if configured (Cloudflare bypass)
 2. **Indexer Search** (if enabled, and no Anna's Archive result)
    - Searches Prowlarr with ebook categories (default: 7020)
    - Ranks using unified ranking algorithm with ebook-specific scoring
    - Downloads via qBittorrent (torrents) or SABnzbd (Usenet)
 3. **Both disabled** → Ebook downloads disabled entirely
-
-### Additional Provider Scaffold
-- **Contract/registry:** `src/lib/services/ebook-source-registry.ts` defines `EbookSourceProvider`, normalized search context/result types, settings field descriptors, and built-in source definitions.
-- **Current adapters:** Existing Anna's Archive and Prowlarr search implementations retain their current behavior; result selection resolves registered source IDs to direct-download or indexer routing.
-- **Admin Settings → E-book Sidecar → Additional Source Configuration:** Add a provider ID, display name, multiple HTTP(S) mirror URLs, and one preferred mirror.
-- **Storage:** `ebook_additional_sources` JSON; each entry has `id`, `name`, `mirrorUrls`, `preferredMirror`, and `settings`.
-- **Provider settings:** A registered provider's `settingsFields` descriptors render text/URL/password, boolean, and select inputs. Password/secret fields are masked on settings reads and preserved when unchanged.
-- **Validation:** IDs are unique lowercase slugs and cannot shadow built-in providers; mirror URLs must use HTTP(S), contain no embedded credentials, and a configured mirror list requires exactly one preferred URL from that list.
-- **Limitation:** Configuring an entry does not enable searching or downloads. Register its provider adapter and implement provider-specific search/download behavior before use. Mirror fallback/rotation is provider-specific.
 
 ### Flow (Anna's Archive)
 1. Audiobook organization completes
@@ -55,7 +54,7 @@ Ebooks are first-class citizens in RMAB, with their own request type, tracking, 
 
 ### Configuration
 
-**Admin Settings → E-book Sidecar tab** (existing provider settings plus generic source configuration)
+**Admin Settings → E-book Sidecar tab** (3 sections)
 
 #### Section 1: Anna's Archive
 | Key | Default | Description |
@@ -63,7 +62,6 @@ Ebooks are first-class citizens in RMAB, with their own request type, tracking, 
 | `ebook_annas_archive_enabled` | `false` | Enable Anna's Archive downloads |
 | `ebook_sidecar_base_url` | `https://annas-archive.gl` | Base URL for mirror |
 | `ebook_sidecar_flaresolverr_url` | `` (empty) | FlareSolverr proxy URL (optional) |
-| `ebook_additional_sources` | `[]` | Generic provider configurations and mirror URLs |
 
 #### Section 2: Indexer Search
 | Key | Default | Description |
@@ -210,8 +208,6 @@ Search: https://annas-archive.gl/search?q=Title+Author&ext=epub&lang=en
   ↓ (Same flow from MD5 page)
 ```
 
-If the exact author + title query returns no result, the scraper retries a broader title-only query, first with the preferred format and then without a format filter.
-
 ## File Naming
 
 **Pattern:** `[Title] - [Author].[format]`
@@ -236,7 +232,6 @@ If the exact author + title query returns no result, the scraper retries a broad
 - `src/lib/processors/organize-files.processor.ts` (ebook branch)
 
 **Services:**
-- `src/lib/services/ebook-source-registry.ts` - Provider contract, source definitions, config validation, and secret handling
 - `src/lib/services/ebook-scraper.ts` - Anna's Archive scraping
 - `src/lib/services/job-queue.service.ts` (ebook job types)
 

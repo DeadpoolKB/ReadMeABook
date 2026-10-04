@@ -7,16 +7,13 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, requireAdmin, AuthenticatedRequest } from '@/lib/middleware/auth';
+import { requireAuth, AuthenticatedRequest } from '@/lib/middleware/auth';
 import { prisma } from '@/lib/db';
 import { getJobQueueService } from '@/lib/services/job-queue.service';
 import { getConfigService } from '@/lib/services/config.service';
 import { RMABLogger } from '@/lib/utils/logger';
-import {
-  EBOOK_SOURCE_IDS,
-  getEbookSourceDefinition,
-  type EbookSourceId,
-} from '@/lib/services/ebook-source-registry';
+import { verifyEbookSelectionToken } from '@/lib/utils/jwt';
+import { resolveLibgenDownloadUrl } from '@/lib/services/ebook-catalog.service';
 
 const logger = RMABLogger.create('API.SelectEbook');
 
@@ -31,7 +28,7 @@ interface SelectedEbook {
   infoUrl?: string;
   score: number;
   finalScore: number;
-  source: EbookSourceId;
+  source: 'annas_archive' | 'prowlarr' | 'libgen' | 'irc';
   format?: string;
   md5?: string;
   downloadUrls?: string[];
@@ -43,11 +40,10 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   return requireAuth(request, async (req: AuthenticatedRequest) => {
-    return requireAdmin(req, async () => {
       try {
-        const { id: parentRequestId } = await params;
+        const { id: requestId } = await params;
         const body = await request.json();
-        const selectedEbook = body.ebook as SelectedEbook;
+        let selectedEbook = body.ebook as (SelectedEbook & { selectionToken?: string }) | undefined;
 
         if (!selectedEbook) {
           return NextResponse.json({ error: 'No ebook selected' }, { status: 400 });
@@ -56,17 +52,10 @@ export async function POST(
         if (!selectedEbook.source) {
           return NextResponse.json({ error: 'Ebook source not specified' }, { status: 400 });
         }
-        const sourceDefinition = getEbookSourceDefinition(selectedEbook.source);
-        if (!sourceDefinition) {
-          return NextResponse.json(
-            { error: `Ebook provider "${selectedEbook.source}" is not implemented` },
-            { status: 400 }
-          );
-        }
 
         // Get the request - could be an audiobook request or an existing ebook request
         const foundRequest = await prisma.request.findUnique({
-          where: { id: parentRequestId },
+          where: { id: requestId },
           include: { audiobook: true },
         });
 
@@ -74,18 +63,43 @@ export async function POST(
           return NextResponse.json({ error: 'Request not found' }, { status: 404 });
         }
 
-        // If this is an ebook request, find the parent audiobook request
+        const isStandaloneEbook = foundRequest.type === 'ebook' && !foundRequest.parentRequestId;
+        if (isStandaloneEbook) {
+          if (!req.user || foundRequest.userId !== req.user.id) {
+            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+          }
+          const verifiedSelection = selectedEbook.selectionToken
+            ? verifyEbookSelectionToken(selectedEbook.selectionToken)
+            : null;
+          if (
+            !verifiedSelection ||
+            verifiedSelection.sub !== req.user.id ||
+            verifiedSelection.requestId !== requestId ||
+            !isSelectedEbook(verifiedSelection.ebook)
+          ) {
+            return NextResponse.json({ error: 'Ebook selection is invalid or expired; search again' }, { status: 400 });
+          }
+          selectedEbook = verifiedSelection.ebook;
+        } else if (req.user?.role !== 'admin') {
+          return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        }
+
+        // Resolve the metadata request used by the shared ebook download pipeline.
         let parentRequest;
         if (foundRequest.type === 'ebook') {
-          if (!foundRequest.parentRequestId) {
-            return NextResponse.json({ error: 'Ebook request has no parent audiobook request' }, { status: 400 });
-          }
-          parentRequest = await prisma.request.findUnique({
-            where: { id: foundRequest.parentRequestId },
-            include: { audiobook: true },
-          });
-          if (!parentRequest) {
-            return NextResponse.json({ error: 'Parent audiobook request not found' }, { status: 404 });
+          if (isStandaloneEbook) {
+            parentRequest = foundRequest;
+          } else {
+            if (!foundRequest.parentRequestId) {
+              return NextResponse.json({ error: 'Ebook request has no parent audiobook request' }, { status: 400 });
+            }
+            parentRequest = await prisma.request.findUnique({
+              where: { id: foundRequest.parentRequestId },
+              include: { audiobook: true },
+            });
+            if (!parentRequest) {
+              return NextResponse.json({ error: 'Parent audiobook request not found' }, { status: 404 });
+            }
           }
         } else if (foundRequest.type === 'audiobook') {
           parentRequest = foundRequest;
@@ -93,7 +107,10 @@ export async function POST(
           return NextResponse.json({ error: 'Can only select ebooks for audiobook requests' }, { status: 400 });
         }
 
-        if (!['downloaded', 'available'].includes(parentRequest.status)) {
+        const allowedStatuses = isStandaloneEbook
+          ? ['pending', 'failed', 'awaiting_search']
+          : ['downloaded', 'available'];
+        if (!allowedStatuses.includes(parentRequest.status)) {
           return NextResponse.json(
             { error: `Cannot select ebook for request in ${parentRequest.status} status` },
             { status: 400 }
@@ -132,7 +149,7 @@ export async function POST(
             },
           });
           logger.info(`Reusing existing ebook request ${ebookRequest.id}`);
-        } else {
+        } else if (!isStandaloneEbook) {
           // Create new ebook request
           ebookRequest = await prisma.request.create({
             data: {
@@ -148,18 +165,26 @@ export async function POST(
           logger.info(`Created new ebook request ${ebookRequest.id}`);
         }
 
+        if (!ebookRequest) {
+          return NextResponse.json({ error: 'Ebook request could not be resolved' }, { status: 500 });
+        }
+
         const audiobook = parentRequest.audiobook;
         const jobQueue = getJobQueueService();
 
         // Route to appropriate download based on source
-        if (sourceDefinition.downloadStrategy === 'direct') {
-          await handleDirectEbookDownload(
+        if (selectedEbook.source === 'annas_archive') {
+          // Anna's Archive: Direct HTTP download
+          await handleAnnasArchiveDownload(
             ebookRequest.id,
             audiobook,
             selectedEbook,
-            jobQueue,
-            sourceDefinition.name
+            jobQueue
           );
+        } else if (selectedEbook.source === 'libgen') {
+          await handleLibgenDownload(ebookRequest.id, audiobook, selectedEbook, jobQueue);
+        } else if (selectedEbook.source === 'irc') {
+          await handleIrcDownload(ebookRequest.id, audiobook, selectedEbook, jobQueue);
         } else {
           // Indexer: Torrent/NZB download
           await handleIndexerDownload(
@@ -172,7 +197,7 @@ export async function POST(
 
         return NextResponse.json({
           success: true,
-          message: `E-book download started from ${sourceDefinition.id === EBOOK_SOURCE_IDS.ANNAS_ARCHIVE ? sourceDefinition.name : selectedEbook.indexer}`,
+          message: `E-book download started from ${selectedEbook.source === 'annas_archive' ? "Anna's Archive" : selectedEbook.indexer}`,
           requestId: ebookRequest.id,
         });
 
@@ -183,31 +208,135 @@ export async function POST(
           { status: 500 }
         );
       }
-    });
   });
+}
+
+function isSelectedEbook(value: unknown): value is SelectedEbook {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const ebook = value as Record<string, unknown>;
+  const source = ebook.source;
+  const supportedSource = source === 'annas_archive' || source === 'prowlarr' || source === 'libgen' || source === 'irc';
+  if (
+    !supportedSource ||
+    typeof ebook.guid !== 'string' ||
+    typeof ebook.title !== 'string' ||
+    typeof ebook.downloadUrl !== 'string'
+  ) {
+    return false;
+  }
+
+  if (source === 'irc') {
+    return /^!\S+\s+\S/.test(ebook.downloadUrl) &&
+      !/[\r\n]/.test(ebook.downloadUrl) &&
+      typeof ebook.format === 'string' &&
+      /^[a-z0-9]{1,8}$/i.test(ebook.format);
+  }
+
+  try {
+    const downloadUrl = new URL(ebook.downloadUrl);
+    return source === 'prowlarr'
+      ? ['https:', 'http:', 'magnet:'].includes(downloadUrl.protocol)
+      : source === 'libgen'
+        ? ['https:', 'http:'].includes(downloadUrl.protocol) && typeof ebook.md5 === 'string'
+        : downloadUrl.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+async function handleIrcDownload(
+  requestId: string,
+  audiobook: { id: string; title: string; author: string },
+  selectedEbook: SelectedEbook,
+  jobQueue: ReturnType<typeof getJobQueueService>
+) {
+  const format = selectedEbook.format?.toLowerCase();
+  if (!format || !/^[a-z0-9]{1,8}$/.test(format)) {
+    throw new Error('IRC result does not specify a valid ebook format');
+  }
+  const downloadHistory = await prisma.downloadHistory.create({
+    data: {
+      requestId,
+      indexerName: selectedEbook.indexer,
+      torrentName: selectedEbook.title,
+      torrentSizeBytes: selectedEbook.size || null,
+      qualityScore: selectedEbook.score,
+      selected: true,
+      downloadClient: 'direct',
+      downloadStatus: 'queued',
+      torrentUrl: selectedEbook.downloadUrl,
+    },
+  });
+  await jobQueue.addStartDirectDownloadJob(
+    requestId,
+    downloadHistory.id,
+    selectedEbook.downloadUrl,
+    `${audiobook.title} - ${audiobook.author}.${format}`,
+    selectedEbook.size || undefined,
+    { skipUrlExtraction: true }
+  );
+}
+
+async function handleLibgenDownload(
+  requestId: string,
+  audiobook: { id: string; title: string; author: string },
+  selectedEbook: SelectedEbook,
+  jobQueue: ReturnType<typeof getJobQueueService>
+) {
+  const configService = getConfigService();
+  const mirrors = (await configService.get('ebook_libgen_mirrors') || '')
+    .split(',')
+    .map((url) => url.trim())
+    .filter(Boolean);
+  if (!selectedEbook.md5) throw new Error('LibGen result is missing its record ID');
+
+  const resolved = await resolveLibgenDownloadUrl(selectedEbook.md5, mirrors);
+  if (!resolved) throw new Error('LibGen could not resolve a direct download link');
+
+  const downloadHistory = await prisma.downloadHistory.create({
+    data: {
+      requestId,
+      indexerName: 'LibGen',
+      torrentName: `${audiobook.title} - ${audiobook.author}.${selectedEbook.format || 'epub'}`,
+      torrentSizeBytes: selectedEbook.size || null,
+      qualityScore: selectedEbook.score,
+      selected: true,
+      downloadClient: 'direct',
+      downloadStatus: 'queued',
+      torrentUrl: resolved.downloadUrl,
+    },
+  });
+
+  await jobQueue.addStartDirectDownloadJob(
+    requestId,
+    downloadHistory.id,
+    resolved.downloadUrl,
+    `${audiobook.title} - ${audiobook.author}.${selectedEbook.format || 'epub'}`,
+    selectedEbook.size || undefined,
+    { skipUrlExtraction: true, referer: resolved.referer }
+  );
 }
 
 /**
  * Handle Anna's Archive download (direct HTTP)
  */
-async function handleDirectEbookDownload(
+async function handleAnnasArchiveDownload(
   requestId: string,
   audiobook: { id: string; title: string; author: string },
   selectedEbook: SelectedEbook,
-  jobQueue: ReturnType<typeof getJobQueueService>,
-  sourceName: string
+  jobQueue: ReturnType<typeof getJobQueueService>
 ) {
   const configService = getConfigService();
   const preferredFormat = await configService.get('ebook_sidecar_preferred_format') || 'epub';
 
-  logger.info(`Starting ${sourceName} download for "${audiobook.title}"`);
-  logger.info(`Format: ${selectedEbook.format || preferredFormat}`);
+  logger.info(`Starting Anna's Archive download for "${audiobook.title}"`);
+  logger.info(`MD5: ${selectedEbook.md5}, Format: ${selectedEbook.format || preferredFormat}`);
 
   // Create download history record
   const downloadHistory = await prisma.downloadHistory.create({
     data: {
       requestId,
-      indexerName: sourceName,
+      indexerName: "Anna's Archive",
       torrentName: `${audiobook.title} - ${audiobook.author}.${selectedEbook.format || preferredFormat}`,
       torrentSizeBytes: null, // Unknown until download starts
       qualityScore: selectedEbook.score,
@@ -284,7 +413,7 @@ async function handleIndexerDownload(
     id: audiobook.id,
     title: audiobook.title,
     author: audiobook.author,
-  }, torrentForJob as any); // Cast to any since ebook torrents don't have audiobook format field
+  }, torrentForJob);
 
   logger.info(`Queued download job for request ${requestId}`);
 }

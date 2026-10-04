@@ -4,10 +4,6 @@
  */
 
 import { compareTwoStrings } from 'string-similarity';
-import {
-  EBOOK_SOURCE_IDS,
-  type EbookSourceId,
-} from '@/lib/services/ebook-source-registry';
 
 export interface TorrentResult {
   indexer: string;
@@ -1076,7 +1072,7 @@ export interface EbookResult {
   format: string;           // epub, pdf, mobi, etc.
   fileSize?: number;        // in bytes
   downloadUrls: string[];
-  source: EbookSourceId;  // Source of the result
+  source: 'annas_archive' | 'prowlarr';  // Source of the result
   indexerId?: number;       // Prowlarr indexer ID (if applicable)
 }
 
@@ -1185,10 +1181,10 @@ export function rankEbooks(
     // Future: Prowlarr indexers will get configurable priority
     let sourceScore = 0;
 
-    if (result.source === EBOOK_SOURCE_IDS.ANNAS_ARCHIVE) {
+    if (result.source === 'annas_archive') {
       sourceScore = 30; // Full points for Anna's Archive
       notes.push('✓ Anna\'s Archive (reliable)');
-    } else if (result.source === EBOOK_SOURCE_IDS.PROWLARR) {
+    } else if (result.source === 'prowlarr') {
       // Future: Use indexer priority from config
       sourceScore = 15; // Base score for Prowlarr results
       notes.push('Prowlarr indexer');

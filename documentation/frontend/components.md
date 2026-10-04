@@ -61,6 +61,10 @@ src/components/
 
 ## Pages Implemented ✅
 
+**Ebook Search Page** (`/ebooks`)
+- Standalone Open Library catalog search, paginated results, request creation, and interactive release selection.
+- Separate from Audible audiobook search at `/search`; ebook requests are tracked with `type: 'ebook'`.
+
 **Homepage** (`/`)
 - Popular Audiobooks and New Releases sections with distinct visual separation
 - Sticky section headers with rounded-2xl design matching section card aesthetic

@@ -10,7 +10,6 @@ import { TorrentResult } from '../utils/ranking-algorithm';
 import { DownloadClientType } from '../interfaces/download-client.interface';
 import { RMABLogger } from '../utils/logger';
 import type { NotificationEvent } from '@/lib/constants/notification-events';
-import type { EbookSourceId } from './ebook-source-registry';
 
 const logger = RMABLogger.create('JobQueue');
 
@@ -154,7 +153,7 @@ export interface EbookSearchResult {
   format: string;
   fileSize?: number;
   downloadUrls: string[]; // Slow download URLs from Anna's Archive
-  source: EbookSourceId;
+  source: 'annas_archive'; // For future indexer support
   score: number; // Ranking score (for future multi-source ranking)
 }
 
@@ -164,6 +163,8 @@ export interface StartDirectDownloadPayload extends JobPayload {
   downloadUrl: string;
   targetFilename: string;
   expectedSize?: number;
+  skipUrlExtraction?: boolean;
+  referer?: string;
 }
 
 export interface MonitorDirectDownloadPayload extends JobPayload {
@@ -893,7 +894,8 @@ export class JobQueueService {
     downloadHistoryId: string,
     downloadUrl: string,
     targetFilename: string,
-    expectedSize?: number
+    expectedSize?: number,
+    options: { skipUrlExtraction?: boolean; referer?: string } = {}
   ): Promise<string> {
     return await this.addJob(
       'start_direct_download',
@@ -903,6 +905,7 @@ export class JobQueueService {
         downloadUrl,
         targetFilename,
         expectedSize,
+        ...options,
       } as StartDirectDownloadPayload,
       {
         priority: 9, // High priority - download selected ebook

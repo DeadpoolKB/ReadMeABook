@@ -6,11 +6,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth, requireAdmin, AuthenticatedRequest } from '@/lib/middleware/auth';
 import { RMABLogger } from '@/lib/utils/logger';
-import {
-  EBOOK_SOURCE_SECRET_MASK,
-  preserveEbookSourceSecrets,
-  validateEbookSourceConfigurations,
-} from '@/lib/services/ebook-source-registry';
 
 const logger = RMABLogger.create('API.Admin.Settings.Ebook');
 
@@ -18,26 +13,50 @@ export async function PUT(request: NextRequest) {
   return requireAuth(request, async (req: AuthenticatedRequest) => {
     return requireAdmin(req, async () => {
       try {
-        const body = await request.json();
-        if (!body || typeof body !== 'object' || Array.isArray(body)) {
-          return NextResponse.json({ error: 'Invalid settings payload' }, { status: 400 });
-        }
+        // Parse request body - new structure with separate source toggles
         const {
           annasArchiveEnabled,
           indexerSearchEnabled,
+          libgenEnabled,
+          libgenMirrors,
+          ircEnabled,
+          ircServer,
+          ircPort,
+          ircTls,
+          ircChannel,
+          ircNick,
+          ircSearchBot,
           format,
           baseUrl,
           flaresolverrUrl,
           autoGrabEnabled,
           kindleFixEnabled,
-          additionalSources,
-        } = body;
-
-        const validatedSources = additionalSources === undefined
-          ? undefined
-          : validateEbookSourceConfigurations(additionalSources);
-        if (validatedSources && !validatedSources.valid) {
-          return NextResponse.json({ error: validatedSources.error }, { status: 400 });
+        } = await request.json();
+        const normalizedLibgenMirrors = typeof libgenMirrors === 'string'
+          ? libgenMirrors.split(',').map((url: string) => url.trim()).filter(Boolean)
+          : [];
+        if (normalizedLibgenMirrors.some((value: string) => {
+          try {
+            const url = new URL(value);
+            return !['http:', 'https:'].includes(url.protocol);
+          } catch {
+            return true;
+          }
+        })) {
+          return NextResponse.json({ error: 'LibGen mirrors must be valid HTTP or HTTPS URLs, separated by commas' }, { status: 400 });
+        }
+        if (libgenEnabled && normalizedLibgenMirrors.length === 0) {
+          return NextResponse.json({ error: 'Configure at least one LibGen mirror when LibGen search is enabled' }, { status: 400 });
+        }
+        const normalizedIrcPort = Number(ircPort || 6697);
+        if (!Number.isInteger(normalizedIrcPort) || normalizedIrcPort < 1 || normalizedIrcPort > 65535) {
+          return NextResponse.json({ error: 'IRC port must be a number from 1 to 65535' }, { status: 400 });
+        }
+        if (ircEnabled && (!ircServer?.trim() || !ircChannel?.trim() || !ircNick?.trim() || !ircSearchBot?.trim())) {
+          return NextResponse.json({ error: 'IRC server, channel, nickname, and search bot are required when IRC is enabled' }, { status: 400 });
+        }
+        if ([ircServer, ircChannel, ircNick, ircSearchBot].some((value) => typeof value === 'string' && /[\r\n\s]/.test(value.trim()))) {
+          return NextResponse.json({ error: 'IRC server, channel, nickname, and search bot must not contain whitespace' }, { status: 400 });
         }
 
         // Enforce: auto-grab must be false if no sources are enabled
@@ -71,22 +90,6 @@ export async function PUT(request: NextRequest) {
         // Save configuration
         const { getConfigService } = await import('@/lib/services/config.service');
         const configService = getConfigService();
-        let sourceConfigsToSave = validatedSources?.valid ? validatedSources.configs : undefined;
-
-        if (
-          sourceConfigsToSave?.some((source) =>
-            Object.values(source.settings).includes(EBOOK_SOURCE_SECRET_MASK)
-          )
-        ) {
-          const previousSourcesValue = await configService.get('ebook_additional_sources');
-          if (previousSourcesValue) {
-            const previousValidation = validateEbookSourceConfigurations(JSON.parse(previousSourcesValue));
-            if (!previousValidation.valid) {
-              throw new Error(`Invalid stored ebook source settings: ${previousValidation.error}`);
-            }
-            sourceConfigsToSave = preserveEbookSourceSecrets(sourceConfigsToSave, previousValidation.configs);
-          }
-        }
 
         const configs = [
           // New granular source toggles
@@ -101,6 +104,60 @@ export async function PUT(request: NextRequest) {
             value: indexerSearchEnabled ? 'true' : 'false',
             category: 'ebook',
             description: 'Enable e-book downloads via indexer search (Prowlarr)',
+          },
+          {
+            key: 'ebook_libgen_enabled',
+            value: libgenEnabled ? 'true' : 'false',
+            category: 'ebook',
+            description: 'Enable direct LibGen ebook search',
+          },
+          {
+            key: 'ebook_libgen_mirrors',
+            value: normalizedLibgenMirrors.join(','),
+            category: 'ebook',
+            description: 'Comma-separated LibGen mirror URLs',
+          },
+          {
+            key: 'ebook_irc_enabled',
+            value: ircEnabled ? 'true' : 'false',
+            category: 'ebook',
+            description: 'Enable ebook search and downloads over IRC DCC',
+          },
+          {
+            key: 'ebook_irc_server',
+            value: (ircServer || '').trim(),
+            category: 'ebook',
+            description: 'IRC server hostname',
+          },
+          {
+            key: 'ebook_irc_port',
+            value: String(normalizedIrcPort),
+            category: 'ebook',
+            description: 'IRC server port',
+          },
+          {
+            key: 'ebook_irc_tls',
+            value: ircTls === false ? 'false' : 'true',
+            category: 'ebook',
+            description: 'Use TLS for IRC connections',
+          },
+          {
+            key: 'ebook_irc_channel',
+            value: (ircChannel || '').trim().replace(/^#/, ''),
+            category: 'ebook',
+            description: 'IRC search channel without the # prefix',
+          },
+          {
+            key: 'ebook_irc_nick',
+            value: (ircNick || '').trim(),
+            category: 'ebook',
+            description: 'IRC client nickname',
+          },
+          {
+            key: 'ebook_irc_search_bot',
+            value: (ircSearchBot || '').trim(),
+            category: 'ebook',
+            description: 'IRC search bot nick',
           },
           // General settings
           {
@@ -136,15 +193,6 @@ export async function PUT(request: NextRequest) {
             description: 'Apply compatibility fixes to EPUB files for Kindle import',
           },
         ];
-
-        if (sourceConfigsToSave) {
-          configs.push({
-            key: 'ebook_additional_sources',
-            value: JSON.stringify(sourceConfigsToSave),
-            category: 'ebook',
-            description: 'Generic configuration for additional ebook source providers',
-          });
-        }
 
         await configService.setMany(configs);
 

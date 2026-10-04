@@ -172,6 +172,9 @@ model Audiobook {
 
   // Core metadata (may come from Audible search, not necessarily cached)
   audibleAsin String? @map("audible_asin") // ASIN if from Audible
+  catalogProvider String? @map("catalog_provider")
+  catalogId       String? @map("catalog_id")
+  isbn            String?
   title       String
   author      String
   narrator    String?
@@ -209,6 +212,8 @@ model Audiobook {
   reportedIssues ReportedIssue[]
 
   @@index([audibleAsin])
+  @@unique([catalogProvider, catalogId])
+  @@index([isbn])
   @@index([plexGuid])
   @@index([absItemId])
   @@index([title])

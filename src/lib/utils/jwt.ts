@@ -156,6 +156,13 @@ export interface DownloadTokenPayload {
   type: 'download';
 }
 
+export interface EbookSelectionPayload {
+  sub: string;
+  requestId: string;
+  type: 'ebook_selection';
+  ebook: Record<string, unknown>;
+}
+
 /**
  * Generate download token (30-day, stateless, URL-embeddable)
  */
@@ -178,13 +185,41 @@ export function verifyDownloadToken(token: string): DownloadTokenPayload | null 
   }
 }
 
+export function generateEbookSelectionToken<T extends object>(
+  userId: string,
+  requestId: string,
+  ebook: T
+): string {
+  const payload = { sub: userId, requestId, type: 'ebook_selection', ebook };
+  return jwt.sign(payload, getSecrets().access, { expiresIn: '15m' });
+}
+
+export function verifyEbookSelectionToken(token: string): EbookSelectionPayload | null {
+  try {
+    const decoded = jwt.verify(token, getSecrets().access) as EbookSelectionPayload;
+    if (
+      decoded.type !== 'ebook_selection' ||
+      typeof decoded.sub !== 'string' ||
+      typeof decoded.requestId !== 'string' ||
+      !decoded.ebook ||
+      typeof decoded.ebook !== 'object' ||
+      Array.isArray(decoded.ebook)
+    ) {
+      return null;
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Decode token without verification (for debugging)
  */
-export function decodeToken(token: string): any {
+export function decodeToken(token: string): jwt.JwtPayload | string | null {
   try {
     return jwt.decode(token);
-  } catch (error) {
+  } catch {
     return null;
   }
 }
