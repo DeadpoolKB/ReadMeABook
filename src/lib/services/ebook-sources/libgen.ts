@@ -8,6 +8,7 @@
 
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import fs from 'fs/promises';
 import { RMABLogger } from '../../utils/logger';
 import { RMAB_USER_AGENT } from '../../utils/user-agent';
 import {
@@ -150,7 +151,8 @@ export class LibGenSource implements EbookSource {
       const filename = `${result.title} - ${result.author}.${result.format}`;
       const targetPath = `${targetDir}/${filename}`;
 
-      const writer = require('fs').createWriteStream(targetPath);
+      const fs = require('fs');
+      const writer = fs.createWriteStream(targetPath);
       response.data.pipe(writer);
 
       return new Promise((resolve, reject) => {

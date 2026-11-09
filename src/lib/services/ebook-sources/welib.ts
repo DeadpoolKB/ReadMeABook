@@ -145,7 +145,8 @@ export class WelibSource implements EbookSource {
       const filename = `${result.title} - ${result.author}.${extracted.format}`;
       const targetPath = `${targetDir}/${filename}`;
 
-      const writer = require('fs').createWriteStream(targetPath);
+      const fs = require('fs');
+      const writer = fs.createWriteStream(targetPath);
       response.data.pipe(writer);
 
       return new Promise((resolve, reject) => {

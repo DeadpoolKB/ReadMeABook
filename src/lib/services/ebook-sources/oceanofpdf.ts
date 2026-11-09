@@ -127,7 +127,8 @@ export class OceanofPDFSource implements EbookSource {
       const filename = `${result.title} - ${result.author}.${result.format}`;
       const targetPath = `${targetDir}/${filename}`;
 
-      const writer = require('fs').createWriteStream(targetPath);
+      const fs = require('fs');
+      const writer = fs.createWriteStream(targetPath);
       response.data.pipe(writer);
 
       return new Promise((resolve, reject) => {
