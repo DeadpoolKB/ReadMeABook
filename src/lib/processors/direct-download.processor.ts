@@ -126,7 +126,7 @@ export async function processStartDirectDownload(payload: StartDirectDownloadPay
 
         // Build target path with actual format
         const sanitizedFilename = sanitizeFilename(`${targetFilename.replace(/\.[^.]+$/, '')}.${extracted.format}`);
-        const targetPath = path.join(downloadsDir, sanitizedFilename);
+        const targetPath = path.join(/*turbopackIgnore: true*/ downloadsDir, sanitizedFilename);
 
         // Create download tracking entry
         const downloadId = generateDownloadId();
