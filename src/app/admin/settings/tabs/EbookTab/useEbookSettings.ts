@@ -82,9 +82,18 @@ export function useEbookSettings({ ebook, onChange, onSuccess, onError, markAsSa
         body: JSON.stringify({
           annasArchiveEnabled: ebook.annasArchiveEnabled || false,
           indexerSearchEnabled: ebook.indexerSearchEnabled || false,
+          libgenEnabled: ebook.libgenEnabled || false,
+          zlibEnabled: ebook.zlibEnabled || false,
+          oceanofpdfEnabled: ebook.oceanofpdfEnabled || false,
+          welibEnabled: ebook.welibEnabled || false,
           format: ebook.preferredFormat || 'epub',
           baseUrl: ebook.baseUrl || 'https://annas-archive.gl',
           flaresolverrUrl: ebook.flaresolverrUrl || '',
+          annasArchiveMirrors: ebook.annasArchiveMirrors || '',
+          libgenMirrors: ebook.libgenMirrors || '',
+          zlibMirrors: ebook.zlibMirrors || '',
+          oceanofpdfMirrors: ebook.oceanofpdfMirrors || '',
+          welibMirrors: ebook.welibMirrors || '',
           autoGrabEnabled: ebook.autoGrabEnabled ?? true,
           kindleFixEnabled: ebook.kindleFixEnabled ?? false,
         }),
@@ -106,7 +115,13 @@ export function useEbookSettings({ ebook, onChange, onSuccess, onError, markAsSa
   /**
    * Helper to check if any ebook source is enabled
    */
-  const isAnySourceEnabled = ebook.annasArchiveEnabled || ebook.indexerSearchEnabled;
+  const isAnySourceEnabled =
+    ebook.annasArchiveEnabled ||
+    ebook.indexerSearchEnabled ||
+    ebook.libgenEnabled ||
+    ebook.zlibEnabled ||
+    ebook.oceanofpdfEnabled ||
+    ebook.welibEnabled;
 
   return {
     saving,

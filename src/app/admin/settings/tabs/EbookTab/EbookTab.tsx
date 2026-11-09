@@ -139,6 +139,23 @@ export function EbookTab({ ebook, onChange, onSuccess, onError, markAsSaved }: E
                     </div>
                   )}
                 </div>
+
+              {/* Mirror URLs */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Mirror URLs (Optional)
+                </label>
+                <Input
+                  type="text"
+                  value={ebook.annasArchiveMirrors || ''}
+                  onChange={(e) => updateEbook('annasArchiveMirrors', e.target.value)}
+                  placeholder="https://annas-archive.li,https://annas-archive.se"
+                  className="font-mono"
+                />
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  Comma-separated list of fallback mirrors. Used if primary mirror fails.
+                </p>
+              </div>
                 {!ebook.flaresolverrUrl && (
                   <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
                     <p className="text-sm text-amber-800 dark:text-amber-200">
@@ -193,6 +210,162 @@ export function EbookTab({ ebook, onChange, onSuccess, onError, markAsSaved }: E
                 in the <span className="font-medium">Indexers</span> tab. Look for the "EBook" tab when
                 editing an indexer.
               </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ═══════════════════════════════════════════════════════════════════════
+          SECTION 3: ADDITIONAL DIRECT DOWNLOAD SOURCES
+          ═══════════════════════════════════════════════════════════════════════ */}
+      <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+        <div className="bg-gray-50 dark:bg-gray-800 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
+            Additional Direct Download Sources
+          </h3>
+        </div>
+        <div className="p-4 space-y-4">
+          {/* LibGen */}
+          <div className="flex items-start gap-4">
+            <input
+              type="checkbox"
+              id="libgen-enabled"
+              checked={ebook.libgenEnabled || false}
+              onChange={(e) => updateEbook('libgenEnabled', e.target.checked)}
+              className="mt-1 h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <div className="flex-1">
+              <label
+                htmlFor="libgen-enabled"
+                className="block text-sm font-medium text-gray-900 dark:text-gray-100 cursor-pointer"
+              >
+                Enable LibGen
+              </label>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                Download e-books from LibGen mirrors.
+              </p>
+            </div>
+          </div>
+          {ebook.libgenEnabled && (
+            <div className="ml-9">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                LibGen Mirrors
+              </label>
+              <Input
+                type="text"
+                value={ebook.libgenMirrors || ''}
+                onChange={(e) => updateEbook('libgenMirrors', e.target.value)}
+                placeholder="http://libgen.is,http://libgen.gs"
+                className="font-mono"
+              />
+            </div>
+          )}
+
+          {/* Z-Library */}
+          <div className="flex items-start gap-4">
+            <input
+              type="checkbox"
+              id="zlib-enabled"
+              checked={ebook.zlibEnabled || false}
+              onChange={(e) => updateEbook('zlibEnabled', e.target.checked)}
+              className="mt-1 h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <div className="flex-1">
+              <label
+                htmlFor="zlib-enabled"
+                className="block text-sm font-medium text-gray-900 dark:text-gray-100 cursor-pointer"
+              >
+                Enable Z-Library
+              </label>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                Download e-books from Z-Library (requires FlareSolverr).
+              </p>
+            </div>
+          </div>
+          {ebook.zlibEnabled && (
+            <div className="ml-9">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Z-Library Mirrors
+              </label>
+              <Input
+                type="text"
+                value={ebook.zlibMirrors || ''}
+                onChange={(e) => updateEbook('zlibMirrors', e.target.value)}
+                placeholder="https://z-lib.fm,https://z-library.gs"
+                className="font-mono"
+              />
+            </div>
+          )}
+
+          {/* OceanofPDF */}
+          <div className="flex items-start gap-4">
+            <input
+              type="checkbox"
+              id="oceanofpdf-enabled"
+              checked={ebook.oceanofpdfEnabled || false}
+              onChange={(e) => updateEbook('oceanofpdfEnabled', e.target.checked)}
+              className="mt-1 h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <div className="flex-1">
+              <label
+                htmlFor="oceanofpdf-enabled"
+                className="block text-sm font-medium text-gray-900 dark:text-gray-100 cursor-pointer"
+              >
+                Enable OceanofPDF
+              </label>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                Download e-books from OceanofPDF mirrors.
+              </p>
+            </div>
+          </div>
+          {ebook.oceanofpdfEnabled && (
+            <div className="ml-9">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                OceanofPDF Mirrors
+              </label>
+              <Input
+                type="text"
+                value={ebook.oceanofpdfMirrors || ''}
+                onChange={(e) => updateEbook('oceanofpdfMirrors', e.target.value)}
+                placeholder="https://oceanofpdf.com"
+                className="font-mono"
+              />
+            </div>
+          )}
+
+          {/* Welib */}
+          <div className="flex items-start gap-4">
+            <input
+              type="checkbox"
+              id="welib-enabled"
+              checked={ebook.welibEnabled || false}
+              onChange={(e) => updateEbook('welibEnabled', e.target.checked)}
+              className="mt-1 h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <div className="flex-1">
+              <label
+                htmlFor="welib-enabled"
+                className="block text-sm font-medium text-gray-900 dark:text-gray-100 cursor-pointer"
+              >
+                Enable Welib
+              </label>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                Download e-books from Welib (requires FlareSolverr).
+              </p>
+            </div>
+          </div>
+          {ebook.welibEnabled && (
+            <div className="ml-9">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Welib Mirrors
+              </label>
+              <Input
+                type="text"
+                value={ebook.welibMirrors || ''}
+                onChange={(e) => updateEbook('welibMirrors', e.target.value)}
+                placeholder="https://welib.org"
+                className="font-mono"
+              />
             </div>
           )}
         </div>

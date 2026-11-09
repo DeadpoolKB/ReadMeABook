@@ -17,7 +17,24 @@ export async function PUT(request: NextRequest) {
         // Parse request body - new structure with separate source toggles
         const bodyResult = await readJsonBody(request);
         if (!bodyResult.ok) return bodyResult.response;
-        const { annasArchiveEnabled, indexerSearchEnabled, format, baseUrl, flaresolverrUrl, autoGrabEnabled, kindleFixEnabled } = bodyResult.data;
+        const {
+          annasArchiveEnabled,
+          indexerSearchEnabled,
+          libgenEnabled,
+          zlibEnabled,
+          oceanofpdfEnabled,
+          welibEnabled,
+          format,
+          baseUrl,
+          flaresolverrUrl,
+          autoGrabEnabled,
+          kindleFixEnabled,
+          annasArchiveMirrors,
+          libgenMirrors,
+          zlibMirrors,
+          oceanofpdfMirrors,
+          welibMirrors,
+        } = bodyResult.data;
 
         // Enforce: auto-grab must be false if no sources are enabled
         const effectiveAutoGrabEnabled = (annasArchiveEnabled || indexerSearchEnabled) ? (autoGrabEnabled ?? true) : false;
@@ -65,6 +82,30 @@ export async function PUT(request: NextRequest) {
             category: 'ebook',
             description: 'Enable e-book downloads via indexer search (Prowlarr)',
           },
+          {
+            key: 'ebook_libgen_enabled',
+            value: libgenEnabled ? 'true' : 'false',
+            category: 'ebook',
+            description: 'Enable e-book downloads from LibGen',
+          },
+          {
+            key: 'ebook_zlib_enabled',
+            value: zlibEnabled ? 'true' : 'false',
+            category: 'ebook',
+            description: 'Enable e-book downloads from Z-Library',
+          },
+          {
+            key: 'ebook_oceanofpdf_enabled',
+            value: oceanofpdfEnabled ? 'true' : 'false',
+            category: 'ebook',
+            description: 'Enable e-book downloads from OceanofPDF',
+          },
+          {
+            key: 'ebook_welib_enabled',
+            value: welibEnabled ? 'true' : 'false',
+            category: 'ebook',
+            description: 'Enable e-book downloads from Welib',
+          },
           // General settings
           {
             key: 'ebook_sidecar_preferred_format',
@@ -90,6 +131,36 @@ export async function PUT(request: NextRequest) {
             value: flaresolverrUrl || '',
             category: 'ebook',
             description: 'FlareSolverr URL for bypassing Cloudflare protection',
+          },
+          {
+            key: 'ebook_annas_archive_mirrors',
+            value: annasArchiveMirrors || '',
+            category: 'ebook',
+            description: 'Comma-separated list of Anna\'s Archive mirror URLs for fallback',
+          },
+          {
+            key: 'ebook_libgen_mirrors',
+            value: libgenMirrors || '',
+            category: 'ebook',
+            description: 'Comma-separated list of LibGen mirror URLs',
+          },
+          {
+            key: 'ebook_zlib_mirrors',
+            value: zlibMirrors || '',
+            category: 'ebook',
+            description: 'Comma-separated list of Z-Library mirror URLs',
+          },
+          {
+            key: 'ebook_oceanofpdf_mirrors',
+            value: oceanofpdfMirrors || '',
+            category: 'ebook',
+            description: 'Comma-separated list of OceanofPDF mirror URLs',
+          },
+          {
+            key: 'ebook_welib_mirrors',
+            value: welibMirrors || '',
+            category: 'ebook',
+            description: 'Comma-separated list of Welib mirror URLs',
           },
           // Kindle compatibility
           {

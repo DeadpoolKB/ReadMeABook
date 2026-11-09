@@ -4,7 +4,11 @@
  *
  * Searches for ebook downloads using multiple sources:
  * 1. Anna's Archive (if enabled) - direct HTTP downloads
- * 2. Indexer Search (if enabled) - via Prowlarr with ebook categories
+ * 2. LibGen (if enabled) - direct HTTP downloads
+ * 3. Z-Library (if enabled) - direct HTTP downloads
+ * 4. OceanofPDF (if enabled) - direct HTTP downloads
+ * 5. Welib (if enabled) - direct HTTP downloads
+ * 6. Indexer Search (if enabled) - via Prowlarr with ebook categories
  */
 
 import { SearchEbookPayload, EbookSearchResult, getJobQueueService } from '../services/job-queue.service';
@@ -26,6 +30,14 @@ import {
   searchByTitle,
   getSlowDownloadLinks,
 } from '../services/ebook-scraper';
+
+// Import new source registry and sources
+import { ebookSourceRegistry } from '../services/ebook-sources/registry';
+import { LibGenSource } from '../services/ebook-sources/libgen';
+import { ZLibrarySource } from '../services/ebook-sources/zlib';
+import { OceanofPDFSource } from '../services/ebook-sources/oceanofpdf';
+import { WelibSource } from '../services/ebook-sources/welib';
+import type { EbookSearchParams, EbookSearchResult as SourceSearchResult } from '../services/ebook-sources/base';
 
 /**
  * Process search ebook job
@@ -63,19 +75,54 @@ export async function processSearchEbook(payload: SearchEbookPayload): Promise<a
     const preferredFormat = payloadFormat || await configService.get('ebook_sidecar_preferred_format') || 'epub';
     const annasArchiveEnabled = await configService.get('ebook_annas_archive_enabled') === 'true';
     const indexerSearchEnabled = await configService.get('ebook_indexer_search_enabled') === 'true';
+    const libgenEnabled = await configService.get('ebook_libgen_enabled') === 'true';
+    const zlibEnabled = await configService.get('ebook_zlib_enabled') === 'true';
+    const oceanofpdfEnabled = await configService.get('ebook_oceanofpdf_enabled') === 'true';
+    const welibEnabled = await configService.get('ebook_welib_enabled') === 'true';
 
-    logger.info(`Sources: Anna's Archive=${annasArchiveEnabled}, Indexer Search=${indexerSearchEnabled}`);
+    // Get language code
+    const region = await configService.getAudibleRegion() as AudibleRegion;
+    const langConfig = getLanguageForRegion(region);
+    const languageCode = langConfig.annasArchiveLang;
+
+    // Get FlareSolverr URL
+    const flaresolverrUrl = await configService.get('ebook_sidecar_flaresolverr_url') || undefined;
+
+    // Get mirror configurations
+    const annasArchiveMirrors = (await configService.get('ebook_annas_archive_mirrors') || '').split(',').map(m => m.trim()).filter(m => m);
+    const libgenMirrors = (await configService.get('ebook_libgen_mirrors') || '').split(',').map(m => m.trim()).filter(m => m);
+    const zlibMirrors = (await configService.get('ebook_zlib_mirrors') || '').split(',').map(m => m.trim()).filter(m => m);
+    const oceanofpdfMirrors = (await configService.get('ebook_oceanofpdf_mirrors') || '').split(',').map(m => m.trim()).filter(m => m);
+    const welibMirrors = (await configService.get('ebook_welib_mirrors') || '').split(',').map(m => m.trim()).filter(m => m);
+
+    logger.info(`Sources: Anna's Archive=${annasArchiveEnabled}, LibGen=${libgenEnabled}, Z-Library=${zlibEnabled}, OceanofPDF=${oceanofpdfEnabled}, Welib=${welibEnabled}, Indexer Search=${indexerSearchEnabled}`);
     logger.info(`Preferred format: ${preferredFormat}`);
 
-    // Track whether we found a result
+    // Initialize and register sources
+    initializeSources(
+      annasArchiveEnabled,
+      libgenEnabled,
+      zlibEnabled,
+      oceanofpdfEnabled,
+      welibEnabled,
+      annasArchiveMirrors,
+      libgenMirrors,
+      zlibMirrors,
+      oceanofpdfMirrors,
+      welibMirrors,
+      flaresolverrUrl
+    );
+
+    // Track results
     let annasArchiveResult: EbookSearchResult | null = null;
+    let additionalSourceResults: SourceSearchResult[] = [];
     let indexerResult: RankedEbookTorrent | null = null;
-    const indexerSearchStats = newSearchStats(); // failed searches are reported, not taken for "nothing found" (#522)
+    const indexerSearchStats = newSearchStats();
 
     // ========== STEP 1: Try Anna's Archive (if enabled) ==========
     if (annasArchiveEnabled) {
       logger.info(`Searching Anna's Archive...`);
-      annasArchiveResult = await searchAnnasArchive(searchAudiobook, preferredFormat, logger);
+      annasArchiveResult = await searchAnnasArchive(searchAudiobook, preferredFormat, logger, languageCode, flaresolverrUrl);
 
       if (annasArchiveResult) {
         logger.info(`Found ebook via Anna's Archive (score: ${annasArchiveResult.score})`);
@@ -84,8 +131,26 @@ export async function processSearchEbook(payload: SearchEbookPayload): Promise<a
       }
     }
 
-    // ========== STEP 2: Try Indexer Search (if enabled and no Anna's Archive result) ==========
-    if (!annasArchiveResult && indexerSearchEnabled) {
+    // ========== STEP 2: Search additional direct download sources in parallel ==========
+    const enabledDirectSources = libgenEnabled || zlibEnabled || oceanofpdfEnabled || welibEnabled;
+    if (enabledDirectSources) {
+      logger.info(`Searching additional direct download sources in parallel...`);
+      additionalSourceResults = await ebookSourceRegistry.searchAll(
+        {
+          title: searchAudiobook.title,
+          author: searchAudiobook.author,
+          asin: searchAudiobook.asin,
+          format: preferredFormat,
+          language: languageCode,
+        },
+        logger
+      );
+
+      logger.info(`Found ${additionalSourceResults.length} results from additional sources`);
+    }
+
+    // ========== STEP 3: Try Indexer Search (if enabled) ==========
+    if (indexerSearchEnabled) {
       logger.info(`Searching indexers...`);
       indexerResult = await searchIndexers(requestId, searchAudiobook, preferredFormat, logger, indexerSearchStats);
 
@@ -96,17 +161,36 @@ export async function processSearchEbook(payload: SearchEbookPayload): Promise<a
       }
     }
 
-    // ========== STEP 3: Handle Results ==========
-    if (!annasArchiveResult && !indexerResult) {
+    // ========== STEP 4: Handle Results ==========
+    // Combine all results and select best
+    const allResults = [];
+
+    if (annasArchiveResult) {
+      allResults.push({ ...annasArchiveResult, source: 'annas_archive' });
+    }
+
+    additionalSourceResults.forEach(result => {
+      allResults.push({ ...result, source: result.sourceId });
+    });
+
+    if (indexerResult) {
+      allResults.push({ ...indexerResult, source: 'prowlarr' });
+    }
+
+    if (allResults.length === 0) {
       // No results found from any source
       const enabledSources = [];
       if (annasArchiveEnabled) enabledSources.push("Anna's Archive");
+      if (libgenEnabled) enabledSources.push("LibGen");
+      if (zlibEnabled) enabledSources.push("Z-Library");
+      if (oceanofpdfEnabled) enabledSources.push("OceanofPDF");
+      if (welibEnabled) enabledSources.push("Welib");
       if (indexerSearchEnabled) enabledSources.push("Indexer Search");
 
       const message = enabledSources.length > 0
         ? noResultsMessage(`No ebook found on ${enabledSources.join(' or ')}`, indexerSearchStats,
           annasArchiveEnabled ? "No ebook found on Anna's Archive. " : '')
-        : 'No ebook sources enabled. Enable Anna\'s Archive or Indexer Search in settings.';
+        : 'No ebook sources enabled. Enable ebook sources in settings.';
 
       logger.warn(`No ebook found for request ${requestId}, marking as awaiting_search`);
 
@@ -127,17 +211,21 @@ export async function processSearchEbook(payload: SearchEbookPayload): Promise<a
       };
     }
 
-    // ========== STEP 4: Route to Appropriate Download ==========
-    if (annasArchiveResult) {
-      // Anna's Archive result → Direct download
-      return await handleAnnasArchiveDownload(requestId, audiobook, annasArchiveResult, preferredFormat, logger);
-    } else if (indexerResult) {
-      // Indexer result → Torrent/NZB download (reuse audiobook processor)
-      return await handleIndexerDownload(requestId, audiobook, indexerResult, preferredFormat, logger);
-    }
+    // Select best result (simple implementation - first result)
+    // TODO: Implement unified ranking algorithm
+    const bestResult = allResults[0];
 
-    // This should never be reached
-    throw new Error('Unexpected state: no result to process');
+    logger.info(`Selected best result from source: ${bestResult.source}`);
+
+    // ========== STEP 5: Route to Appropriate Download ==========
+    if (bestResult.source === 'annas_archive') {
+      return await handleAnnasArchiveDownload(requestId, audiobook, bestResult as EbookSearchResult, preferredFormat, logger);
+    } else if (bestResult.source === 'prowlarr') {
+      return await handleIndexerDownload(requestId, audiobook, bestResult as RankedEbookTorrent, preferredFormat, logger);
+    } else {
+      // Handle additional direct download sources
+      return await handleDirectSourceDownload(requestId, audiobook, bestResult as SourceSearchResult, preferredFormat, logger);
+    }
 
   } catch (error) {
     logger.error(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -156,21 +244,66 @@ export async function processSearchEbook(payload: SearchEbookPayload): Promise<a
 }
 
 /**
+ * Initialize and register ebook sources
+ */
+function initializeSources(
+  annasArchiveEnabled: boolean,
+  libgenEnabled: boolean,
+  zlibEnabled: boolean,
+  oceanofpdfEnabled: boolean,
+  welibEnabled: boolean,
+  annasArchiveMirrors: string[],
+  libgenMirrors: string[],
+  zlibMirrors: string[],
+  oceanofpdfMirrors: string[],
+  welibMirrors: string[],
+  flaresolverrUrl?: string
+): void {
+  // Clear existing sources
+  const allSources = ebookSourceRegistry.getAllSources();
+  allSources.forEach(source => ebookSourceRegistry.unregister(source.id));
+
+  // Register LibGen
+  if (libgenEnabled && libgenMirrors.length > 0) {
+    const libgen = new LibGenSource(libgenMirrors);
+    libgen.enabled = true;
+    ebookSourceRegistry.register(libgen);
+  }
+
+  // Register Z-Library
+  if (zlibEnabled && zlibMirrors.length > 0) {
+    const zlib = new ZLibrarySource(zlibMirrors, flaresolverrUrl);
+    zlib.enabled = true;
+    ebookSourceRegistry.register(zlib);
+  }
+
+  // Register OceanofPDF
+  if (oceanofpdfEnabled && oceanofpdfMirrors.length > 0) {
+    const oceanofpdf = new OceanofPDFSource(oceanofpdfMirrors);
+    oceanofpdf.enabled = true;
+    ebookSourceRegistry.register(oceanofpdf);
+  }
+
+  // Register Welib
+  if (welibEnabled && welibMirrors.length > 0) {
+    const welib = new WelibSource(welibMirrors, flaresolverrUrl);
+    welib.enabled = true;
+    ebookSourceRegistry.register(welib);
+  }
+}
+
+/**
  * Search Anna's Archive for ebook
  */
 async function searchAnnasArchive(
   audiobook: { title: string; author: string; asin?: string },
   preferredFormat: string,
-  logger: RMABLogger
+  logger: RMABLogger,
+  languageCode: string = 'en',
+  flaresolverrUrl?: string
 ): Promise<EbookSearchResult | null> {
   const configService = getConfigService();
   const baseUrl = await configService.get('ebook_sidecar_base_url') || 'https://annas-archive.gl';
-  const flaresolverrUrl = await configService.get('ebook_sidecar_flaresolverr_url') || undefined;
-
-  // Get language code from Audible region config
-  const region = await configService.getAudibleRegion() as AudibleRegion;
-  const langConfig = getLanguageForRegion(region);
-  const languageCode = langConfig.annasArchiveLang;
 
   if (flaresolverrUrl) {
     logger.info(`Using FlareSolverr at ${flaresolverrUrl}`);
@@ -547,6 +680,60 @@ async function handleIndexerDownload(
       finalScore: result.finalScore,
       seeders: result.seeders || 0,
       size: result.size,
+    },
+  };
+}
+
+/**
+ * Handle direct download from additional sources (LibGen, Z-Library, etc.)
+ */
+async function handleDirectSourceDownload(
+  requestId: string,
+  audiobook: { title: string; author: string },
+  result: SourceSearchResult,
+  preferredFormat: string,
+  logger: RMABLogger
+): Promise<any> {
+  logger.info(`==================== EBOOK SEARCH RESULT ====================`);
+  logger.info(`Source: ${result.sourceName}`);
+  logger.info(`Title: "${audiobook.title}"`);
+  logger.info(`Author: "${audiobook.author}"`);
+  logger.info(`Format: ${result.format}`);
+  logger.info(`Download URL: ${result.downloadUrl.substring(0, 100)}...`);
+  logger.info(`==============================================================`);
+
+  // Create download history record
+  const downloadHistory = await prisma.downloadHistory.create({
+    data: {
+      requestId,
+      indexerName: result.sourceName,
+      torrentName: `${audiobook.title} - ${audiobook.author}.${result.format}`,
+      torrentSizeBytes: result.size || null,
+      qualityScore: 80, // Default score for direct sources
+      selected: true,
+      downloadClient: 'direct',
+      downloadStatus: 'queued',
+    },
+  });
+
+  // Trigger direct download job
+  const jobQueue = getJobQueueService();
+  await jobQueue.addStartDirectDownloadJob(
+    requestId,
+    downloadHistory.id,
+    result.downloadUrl,
+    buildEbookDownloadName(audiobook.title, audiobook.author, result.format),
+    result.size
+  );
+
+  return {
+    success: true,
+    message: `Found ebook via ${result.sourceName}, starting download`,
+    requestId,
+    source: result.sourceId,
+    searchResult: {
+      format: result.format,
+      score: 80,
     },
   };
 }

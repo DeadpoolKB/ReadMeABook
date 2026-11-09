@@ -125,15 +125,25 @@ export interface PathsSettings {
 
 /**
  * E-book sidecar configuration
- * Supports two sources: Anna's Archive (direct HTTP) and Indexer Search (Prowlarr)
+ * Supports multiple direct download sources and indexer search
  */
 export interface EbookSettings {
   // Source toggles
   annasArchiveEnabled: boolean;
   indexerSearchEnabled: boolean;
+  libgenEnabled: boolean;
+  zlibEnabled: boolean;
+  oceanofpdfEnabled: boolean;
+  welibEnabled: boolean;
   // Anna's Archive specific settings
   baseUrl: string;
   flaresolverrUrl: string;
+  annasArchiveMirrors: string;
+  // Additional source mirrors
+  libgenMirrors: string;
+  zlibMirrors: string;
+  oceanofpdfMirrors: string;
+  welibMirrors: string;
   // General settings (shared across sources)
   preferredFormat: string;
   autoGrabEnabled: boolean;

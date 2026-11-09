@@ -31,6 +31,9 @@ const FLARESOLVERR_TIMEOUT_MS = 60000; // 60 seconds for FlareSolverr requests
 // In-memory cache for MD5 lookups (prevents re-scraping same ASIN)
 const md5Cache = new Map<string, string | null>();
 
+// In-memory cache for successful mirror (to reuse for subsequent requests)
+let successfulMirror: string | null = null;
+
 // FlareSolverr types
 interface FlareSolverrRequest {
   cmd: 'request.get';
@@ -307,6 +310,31 @@ export async function downloadEbook(
 }
 
 /**
+ * Get Anna's Archive mirrors from configuration
+ * Returns primary URL plus any configured additional mirrors
+ */
+async function getAnnasArchiveMirrors(baseUrl: string): Promise<string[]> {
+  try {
+    const { getConfigService } = await import('./config.service');
+    const configService = getConfigService();
+    const mirrorsConfig = await configService.get('ebook_annas_archive_mirrors');
+
+    if (mirrorsConfig && typeof mirrorsConfig === 'string') {
+      const mirrors = mirrorsConfig.split(',').map(m => m.trim()).filter(m => m);
+      // Ensure baseUrl is first if not already in the list
+      if (!mirrors.includes(baseUrl)) {
+        return [baseUrl, ...mirrors];
+      }
+      return mirrors;
+    }
+  } catch (error) {
+    moduleLogger.debug('Failed to read mirror config, using base URL only');
+  }
+
+  return [baseUrl];
+}
+
+/**
  * Step 1: Search Anna's Archive by ASIN and extract MD5 hash
  * Exported for use by search-ebook processor
  */
@@ -328,74 +356,67 @@ export async function searchByAsin(
     return cached ?? null; // Convert undefined to null
   }
 
-  try {
-    // Build search URL with ASIN and optional format filter
-    const formatParam = format && format !== 'any' ? `ext=${format}&` : '';
-    const searchUrl = `${trimTrailingSlashes(baseUrl)}/search?${formatParam}lang=${languageCode}&q=%22asin:${asin}%22`;
+  // Get list of mirrors to try
+  const mirrors = await getAnnasArchiveMirrors(baseUrl);
+  moduleLogger.debug(`Trying ${mirrors.length} mirror(s) for ASIN search`);
 
-    moduleLogger.debug(`ASIN search URL: ${searchUrl}`);
-
-    const html = await fetchHtml(searchUrl, flaresolverrUrl, logger);
-    const $ = cheerio.load(html);
-
-    // Exclude MD5 links from "Recent downloads" banner and "Partial matches" section
-    // Only look for actual search result links
-    const searchResultLinks = $('a[href*="/md5/"]').filter((i, elem) => {
-      // Exclude links inside the recent downloads banner
-      if ($(elem).closest('.js-recent-downloads-container').length > 0) {
-        return false;
-      }
-      // Exclude links inside the partial matches section
-      if ($(elem).closest('.js-partial-matches-show').length > 0) {
-        return false;
-      }
-      return true;
-    });
-
-    // Debug logging for ASIN search
-    const pageTitle = $('title').text();
-    const allMd5Links = $('a[href*="/md5/"]').length;
-    moduleLogger.debug('ASIN search results', {
-      htmlLength: html.length,
-      pageTitle,
-      totalMd5Links: allMd5Links,
-      searchResultLinks: searchResultLinks.length
-    });
-
-    // Extract MD5 from first search result link
-    const firstResult = searchResultLinks.first();
-    const href = firstResult.attr('href');
-
-    if (firstResult.length > 0) {
-      const resultText = firstResult.text().trim().substring(0, 100);
-      const parentText = firstResult.parent().text().trim().substring(0, 100);
-      moduleLogger.debug('First result details', { resultText, parentText });
-    }
-
-    if (!href) {
-      await logger?.warn(`No search results found for ASIN: ${asin}`);
-      md5Cache.set(cacheKey, null);
-      return null;
-    }
-
-    // Extract MD5 from href (e.g., "/md5/3b6f9c0f..." -> "3b6f9c0f...")
-    const md5Match = href.match(/\/md5\/([a-f0-9]+)/);
-    const md5 = md5Match ? md5Match[1] : null;
-
-    moduleLogger.debug(`Extracted MD5 from ASIN search: ${md5}`);
-
-    // Cache result
-    md5Cache.set(cacheKey, md5);
-
-    await delay(REQUEST_DELAY_MS);
-    return md5;
-  } catch (error) {
-    await logger?.error(
-      `Search failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
-    md5Cache.set(cacheKey, null);
-    return null;
+  // If we have a cached successful mirror, try it first
+  let mirrorsToTry = mirrors;
+  if (successfulMirror && mirrors.includes(successfulMirror)) {
+    mirrorsToTry = [successfulMirror, ...mirrors.filter(m => m !== successfulMirror)];
   }
+
+  for (const mirror of mirrorsToTry) {
+    try {
+      // Build search URL with ASIN and optional format filter
+      // Note: No quotes around asin: parameter (other scrapers don't use quotes)
+      const formatParam = format && format !== 'any' ? `ext=${format}&` : '';
+      const searchUrl = `${trimTrailingSlashes(mirror)}/search?${formatParam}lang=${languageCode}&q=asin:${asin}`;
+
+      moduleLogger.debug(`ASIN search URL (mirror: ${mirror}): ${searchUrl}`);
+
+      const html = await fetchHtml(searchUrl, flaresolverrUrl, logger);
+
+      // Debug logging for ASIN search
+      const pageTitle = cheerio.load(html)('title').text();
+      const allMd5Links = cheerio.load(html)('a[href*="/md5/"]').length;
+      moduleLogger.debug('ASIN search results', {
+        htmlLength: html.length,
+        pageTitle,
+        totalMd5Links: allMd5Links,
+        htmlPreview: html.substring(0, 500)
+      });
+
+      // Extract MD5 using multiple selector patterns
+      const md5 = extractMd5FromSearchHtml(html, logger);
+
+      if (!md5) {
+        await logger?.warn(`No search results found for ASIN: ${asin} on mirror ${mirror}`);
+        continue; // Try next mirror
+      }
+
+      moduleLogger.debug(`Extracted MD5 from ASIN search: ${md5} (mirror: ${mirror})`);
+
+      // Cache successful mirror for future requests
+      successfulMirror = mirror;
+
+      // Cache result
+      md5Cache.set(cacheKey, md5);
+
+      await delay(REQUEST_DELAY_MS);
+      return md5;
+    } catch (error) {
+      await logger?.warn(
+        `Search failed on mirror ${mirror}: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+      // Continue to next mirror
+    }
+  }
+
+  // All mirrors failed
+  await logger?.error(`All ${mirrors.length} mirror(s) failed for ASIN: ${asin}`);
+  md5Cache.set(cacheKey, null);
+  return null;
 }
 
 /**
@@ -421,75 +442,83 @@ export async function searchByTitle(
     return cached ?? null;
   }
 
-  try {
-    // Build search URL using specific term types for author and title (more accurate than raw query)
-    const encodedAuthor = encodeURIComponent(author);
-    const encodedTitle = encodeURIComponent(title);
+  // Get list of mirrors to try
+  const mirrors = await getAnnasArchiveMirrors(baseUrl);
+  moduleLogger.debug(`Trying ${mirrors.length} mirror(s) for title search`);
 
-    // Use Anna's Archive advanced search with specific term types
-    let searchUrl = `${trimTrailingSlashes(baseUrl)}/search?termtype_1=author&termval_1=${encodedAuthor}&termtype_2=title&termval_2=${encodedTitle}`;
-
-    // Add format filter if not 'any'
-    if (format && format !== 'any') {
-      searchUrl += `&ext=${format}`;
-    }
-
-    // Add content type filters (books only, all fiction/nonfiction/unknown)
-    searchUrl += '&content=book_nonfiction&content=book_fiction&content=book_unknown';
-
-    // Add language filter
-    searchUrl += `&lang=${languageCode}`;
-
-    // Empty raw query (we're using specific terms instead)
-    searchUrl += '&q=';
-
-    moduleLogger.debug(`Title search URL: ${searchUrl}`);
-
-    const html = await fetchHtml(searchUrl, flaresolverrUrl, logger);
-    const $ = cheerio.load(html);
-
-    // Exclude MD5 links from "Recent downloads" banner and "Partial matches" section
-    const searchResultLinks = $('a[href*="/md5/"]').filter((i, elem) => {
-      // Exclude links inside the recent downloads banner
-      if ($(elem).closest('.js-recent-downloads-container').length > 0) {
-        return false;
-      }
-      // Exclude links inside the partial matches section
-      if ($(elem).closest('.js-partial-matches-show').length > 0) {
-        return false;
-      }
-      return true;
-    });
-
-    const allMd5Links = $('a[href*="/md5/"]').length;
-    moduleLogger.debug('Title search results', { totalMd5Links: allMd5Links, searchResultLinks: searchResultLinks.length });
-
-    // Extract MD5 from first search result link
-    const firstResult = searchResultLinks.first();
-    const href = firstResult.attr('href');
-
-    if (!href) {
-      await logger?.warn(`No search results found for title: "${title}" by ${author}`);
-      md5Cache.set(cacheKey, null);
-      return null;
-    }
-
-    // Extract MD5 from href
-    const md5Match = href.match(/\/md5\/([a-f0-9]+)/);
-    const md5 = md5Match ? md5Match[1] : null;
-
-    // Cache result
-    md5Cache.set(cacheKey, md5);
-
-    await delay(REQUEST_DELAY_MS);
-    return md5;
-  } catch (error) {
-    await logger?.error(
-      `Title search failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
-    md5Cache.set(cacheKey, null);
-    return null;
+  // If we have a cached successful mirror, try it first
+  let mirrorsToTry = mirrors;
+  if (successfulMirror && mirrors.includes(successfulMirror)) {
+    mirrorsToTry = [successfulMirror, ...mirrors.filter(m => m !== successfulMirror)];
   }
+
+  for (const mirror of mirrorsToTry) {
+    try {
+      // Build search URL using specific term types for author and title (more accurate than raw query)
+      const encodedAuthor = encodeURIComponent(author);
+      const encodedTitle = encodeURIComponent(title);
+
+      // Use Anna's Archive advanced search with specific term types
+      let searchUrl = `${trimTrailingSlashes(mirror)}/search?termtype_1=author&termval_1=${encodedAuthor}&termtype_2=title&termval_2=${encodedTitle}`;
+
+      // Add format filter if not 'any'
+      if (format && format !== 'any') {
+        searchUrl += `&ext=${format}`;
+      }
+
+      // Add content type filters (books only, all fiction/nonfiction/unknown)
+      searchUrl += '&content=book_nonfiction&content=book_fiction&content=book_unknown';
+
+      // Add language filter
+      searchUrl += `&lang=${languageCode}`;
+
+      // Empty raw query (we're using specific terms instead)
+      searchUrl += '&q=';
+
+      moduleLogger.debug(`Title search URL (mirror: ${mirror}): ${searchUrl}`);
+
+      const html = await fetchHtml(searchUrl, flaresolverrUrl, logger);
+
+      // Debug logging for title search
+      const pageTitle = cheerio.load(html)('title').text();
+      const allMd5Links = cheerio.load(html)('a[href*="/md5/"]').length;
+      moduleLogger.debug('Title search results', {
+        htmlLength: html.length,
+        pageTitle,
+        totalMd5Links: allMd5Links,
+        htmlPreview: html.substring(0, 500)
+      });
+
+      // Extract MD5 using multiple selector patterns
+      const md5 = extractMd5FromSearchHtml(html, logger);
+
+      if (!md5) {
+        await logger?.warn(`No search results found for title: "${title}" by ${author} on mirror ${mirror}`);
+        continue; // Try next mirror
+      }
+
+      moduleLogger.debug(`Extracted MD5 from title search: ${md5} (mirror: ${mirror})`);
+
+      // Cache successful mirror for future requests
+      successfulMirror = mirror;
+
+      // Cache result
+      md5Cache.set(cacheKey, md5);
+
+      await delay(REQUEST_DELAY_MS);
+      return md5;
+    } catch (error) {
+      await logger?.warn(
+        `Title search failed on mirror ${mirror}: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+      // Continue to next mirror
+    }
+  }
+
+  // All mirrors failed
+  await logger?.error(`All ${mirrors.length} mirror(s) failed for title: "${title}" by ${author}`);
+  md5Cache.set(cacheKey, null);
+  return null;
 }
 
 /** Anna's Archive (or FlareSolverr) could not be reached or answered with a challenge page */
@@ -776,6 +805,54 @@ async function retryRequest<T>(
   }
 
   throw lastError || new Error('Request failed after retries');
+}
+
+/**
+ * Extract MD5 from search HTML using multiple selector patterns
+ * Tries different CSS selectors in order of specificity
+ */
+function extractMd5FromSearchHtml(html: string, logger?: RMABLogger): string | null {
+  const $ = cheerio.load(html);
+
+  // Pattern 1: Try Shelfmark's selector (most specific)
+  const shelfmarkResults = $('.js-aarecord-list-outer > div > div a[href*="/md5/"]');
+  if (shelfmarkResults.length > 0) {
+    const href = shelfmarkResults.first().attr('href');
+    const md5Match = href?.match(/\/md5\/([a-f0-9]+)/);
+    if (md5Match) {
+      moduleLogger.debug('Extracted MD5 using Shelfmark selector pattern');
+      return md5Match[1];
+    }
+  }
+
+  // Pattern 2: Try old selectors (for backward compatibility)
+  const oldResults = $('a[href*="/md5/"]').filter((i, elem) => {
+    if ($(elem).closest('.js-recent-downloads-container').length > 0) return false;
+    if ($(elem).closest('.js-partial-matches-show').length > 0) return false;
+    return true;
+  });
+  if (oldResults.length > 0) {
+    const href = oldResults.first().attr('href');
+    const md5Match = href?.match(/\/md5\/([a-f0-9]+)/);
+    if (md5Match) {
+      moduleLogger.debug('Extracted MD5 using old selector pattern');
+      return md5Match[1];
+    }
+  }
+
+  // Pattern 3: Fallback to any MD5 link (least specific, may pick up banners)
+  const fallbackResults = $('a[href*="/md5/"]');
+  if (fallbackResults.length > 0) {
+    const href = fallbackResults.first().attr('href');
+    const md5Match = href?.match(/\/md5\/([a-f0-9]+)/);
+    if (md5Match) {
+      moduleLogger.debug('Extracted MD5 using fallback selector (may include banners)');
+      return md5Match[1];
+    }
+  }
+
+  moduleLogger.debug('No MD5 links found in search HTML');
+  return null;
 }
 
 /**

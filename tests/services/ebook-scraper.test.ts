@@ -431,17 +431,23 @@ describe('E-book sidecar', () => {
     vi.useRealTimers();
   });
 
-  it('filters ASIN search results and warns on challenge pages', async () => {
+  it('filters ASIN search results using new selector patterns', async () => {
     vi.useFakeTimers();
 
     const searchHtml = `
+      <div class="js-aarecord-list-outer">
+        <div>
+          <div>
+            <a href="/md5/abc333">Valid Shelfmark Result</a>
+          </div>
+        </div>
+      </div>
       <div class="js-recent-downloads-container">
         <a href="/md5/abc111">Recent</a>
       </div>
       <div class="js-partial-matches-show">
         <a href="/md5/abc222">Partial</a>
       </div>
-      <a href="/md5/abc333">Valid</a>
     `;
     const md5Html = '<html>challenge-running</html>';
 
