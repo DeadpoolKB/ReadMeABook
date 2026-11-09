@@ -1,6 +1,6 @@
 services:
   readmeabook:
-    image: ghcr.io/kikootwo/readmeabook:latest
+    image: ghcr.io/DeadpoolKB/ReadMeABook:latest
 #    build:
 #      context: .
 #      dockerfile: dockerfile.unified
