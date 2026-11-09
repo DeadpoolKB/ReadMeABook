@@ -182,7 +182,7 @@ export class DownloadClientManager {
   private async createService(config: DownloadClientConfig): Promise<IDownloadClient> {
     const baseDir = await this.configService.get('download_dir') || '/downloads';
     const downloadDir = config.customPath
-      ? path.join(/*turbopackIgnore: true*/ baseDir, config.customPath)
+      ? path.join(process.cwd(), baseDir, config.customPath)
       : baseDir;
 
     switch (config.type) {

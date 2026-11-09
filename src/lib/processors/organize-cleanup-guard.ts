@@ -69,8 +69,8 @@ export async function collectGuardRoots(): Promise<GuardRoots> {
       }
       for (const client of clients as Array<{ customPath?: string; remotePathMappingEnabled?: boolean; localPath?: string }>) {
         if (client.customPath) {
-          downloadRoots.add(path.join(/*turbopackIgnore: true*/ downloadDir, client.customPath));
-          sweepRoots.add(path.join(/*turbopackIgnore: true*/ downloadDir, client.customPath));
+          downloadRoots.add(path.join(process.cwd(), downloadDir, client.customPath));
+          sweepRoots.add(path.join(process.cwd(), downloadDir, client.customPath));
         }
         if (client.remotePathMappingEnabled && client.localPath) {
           downloadRoots.add(client.localPath);
