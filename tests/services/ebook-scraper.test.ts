@@ -499,7 +499,7 @@ describe('E-book sidecar', () => {
 
     axiosMock.get.mockImplementation(async (url: string) => {
       if (url.includes('/search?')) {
-        return { data: '<a href="/md5/abc123">Result</a>' };
+        return { data: '<div class="js-aarecord-list-outer"><div><div><a href="/md5/abc123">Result</a></div></div></div>' };
       }
       if (url.includes('/md5/abc123')) {
         return { data: '<li><a href="/slow_download/abc123/0/1">Slow</a> (no waitlist)</li>' };
@@ -589,13 +589,19 @@ describe('E-book sidecar', () => {
     vi.useFakeTimers();
 
     const searchHtml = `
+      <div class="js-aarecord-list-outer">
+        <div>
+          <div>
+            <a href="/md5/cached">Valid Shelfmark Result</a>
+          </div>
+        </div>
+      </div>
       <div class="js-recent-downloads-container">
         <a href="/md5/recent">Recent</a>
       </div>
       <div class="js-partial-matches-show">
         <a href="/md5/partial">Partial</a>
       </div>
-      <a href="/md5/cached">Valid</a>
     `;
 
     axiosMock.get.mockImplementation(async (url: string) => {
@@ -634,7 +640,7 @@ describe('E-book sidecar', () => {
 
     axiosMock.get.mockImplementation(async (url: string, config?: any) => {
       if (url.includes('/search?')) {
-        return { data: '<a href="/md5/deadbeef">Result</a>' };
+        return { data: '<div class="js-aarecord-list-outer"><div><div><a href="/md5/deadbeef">Result</a></div></div></div>' };
       }
       if (url.includes('/md5/deadbeef')) {
         return { data: '<li><a href="/slow_download/deadbeef/0/1">Slow</a> (no waitlist)</li>' };
