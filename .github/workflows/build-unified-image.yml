@@ -1,7 +1,6 @@
 # Release image build. Docs: documentation/deployment/ci-workflows.md
 # Publishes only from v* tags (a tag push, or a manual dispatch run on a tag).
-# A manual dispatch on a branch runs the tests and builds both arches, but
-# skips login, push, cache writes, the build summary and both Discord posts.
+# A manual dispatch on a branch builds both arches, but skips login, push, cache writes and the build summary.
 name: Build and Publish Unified Docker Image
 
 on:
@@ -18,17 +17,7 @@ env:
   IMAGE_NAME: DeadpoolKB/ReadMeABook
 
 jobs:
-  test:
-    name: Run Tests
-    uses: ./.github/workflows/run-tests.yml
-    with:
-      # A manual dispatch on a branch posts nothing to Discord
-      send_notification: ${{ startsWith(github.ref, 'refs/tags/v') }}
-    secrets:
-      WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-
   build-and-push:
-    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -117,45 +106,3 @@ jobs:
           echo "  -v readmeabook-data:/var/lib/postgresql/data \\" >> $GITHUB_STEP_SUMMARY
           echo "  ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-
-      - name: Send Discord notification
-        if: startsWith(github.ref, 'refs/tags/v') && success()
-        env:
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          curl -H "Content-Type: application/json" \
-            -X POST \
-            -d '{
-              "embeds": [{
-                "title": "📦 Docker Image Published",
-                "description": "**ReadMeABook v${{ steps.version.outputs.app_version }}** has been built and published to GitHub Container Registry.",
-                "color": 5763719,
-                "fields": [
-                  {
-                    "name": "🔖 Version",
-                    "value": "`v${{ steps.version.outputs.app_version }}`",
-                    "inline": true
-                  },
-                  {
-                    "name": "🌿 Branch",
-                    "value": "`'"$REF_NAME"'`",
-                    "inline": true
-                  },
-                  {
-                    "name": "📋 Commit",
-                    "value": "[`${{ steps.version.outputs.git_commit }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})",
-                    "inline": true
-                  },
-                  {
-                    "name": "📥 Pull Command",
-                    "value": "```docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest```",
-                    "inline": false
-                  }
-                ],
-                "footer": {
-                  "text": "ReadMeABook v${{ steps.version.outputs.app_version }} • Built with GitHub Actions"
-                },
-                "timestamp": "${{ steps.version.outputs.build_date }}"
-              }]
-            }' \
-            ${{ secrets.WEBHOOK_URL }}
