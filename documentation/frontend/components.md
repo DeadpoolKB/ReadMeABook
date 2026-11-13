@@ -1,0 +1,233 @@
+# Frontend Components
+
+**Status:** ⏳ In Development
+
+React components for ReadMeABook UI built with Next.js 14+, TypeScript, and Tailwind CSS.
+
+## Structure
+
+```
+src/app/
+├── (auth)/login/
+├── (user)/page.tsx, search/, requests/, profile/
+├── (admin)/admin/
+└── setup/
+
+src/components/
+├── audiobooks/    # Audiobook display
+├── requests/      # Request cards, status
+├── layout/        # Header, nav, footer
+└── ui/            # Reusable primitives
+```
+
+## Key Components
+
+**Layout**
+- **Header** ✅ - Top nav, search input, user menu with "Change Password" option (local users only), logout
+- **Sidebar** - Admin side nav
+- **Footer** - Version, links
+
+**Audiobooks**
+- **AudiobookCard** ✅ - Cover, title, author, narrator, duration, request button, clickable to open details modal. Shows "Requested by [username]" when someone else has requested the book, "Requested" when current user has requested it
+- **AudiobookGrid** - Responsive grid (1/2/3/4 cols)
+- **SeriesSearchError** ✅ - `src/components/series/SeriesSearchError.tsx`: `/series` page panel in place of the grid when a search fails with no results to show (`error && !isLoading && !hasData`). `role="alert"`; 502 → "Couldn't get results from Audible" + "Audible didn't return series results. Try again in a moment.", other errors → "Series search failed"; Try again button (≥44 px) reruns the search, and focus returns to it after a failed retry (`focusRetry`, once per click; `onRetryFocused` clears it, and so does editing the query, so a cached error never pulls focus from the search box). See [integrations/audible-series-search.md](../integrations/audible-series-search.md)
+- **AudiobookDetailsModal** ✅ - Full-screen modal with comprehensive metadata (description, genres, rating, release date, narrator, language, format, publisher, request functionality). Shows requesting user's name when applicable. Scroll area (`flex flex-col`) holds a `flex flex-col min-h-0` content column; bottom padding is an `after:` spacer so it survives when the column is shrunk. Summary rendered by **BookSummary**
+- **BookSummary** ✅ - `src/components/audiobooks/BookSummary.tsx`. Summary h3 + capped scroll box, returned as a fragment (both are flex items of the modal content column). Wrapper owns the cap via `--summary-cap`: 38dvh by default, 15rem at `[@media(min-width:640px)_and_(min-height:500px)]`; `max-h-(--summary-cap)`. Phones and landscape phones (below that query): `shrink-0`, fixed 38dvh box, sheet scrolls. At/above it: box absorbs leftover height: wrapper `shrink basis-[content] h-24` → height between min(6rem, natural) and 15rem (CSS only: auto min size = min(content, specified h-24)); 1440x900 default modal has 0 outer overflow. Text over the cap by ≤12px: inline `maxHeight: calc(var(--summary-cap) + 12px)` (shown whole; decided against the cap, not the current height, so no flip-flop). Overflowing only: `overflow-y-auto` (else `overflow-y-hidden`), `role=region`, `aria-labelledby` heading ("Summary"), `tabIndex=0`, bottom fade `h-6` + "more" chevron button while more text below, top fade `h-4` once scrolled; fades and chevron inset by scrollbar width. Chevron: `type=button tabIndex=-1 aria-hidden` (pointer only; keyboard/SR use the region), `absolute -bottom-2` (disc top = bottom fade top, so it only covers faded text; hangs 8px below the box, inside the next section mt-6), `right: scrollbarWidth + 4`, click → `scrollBy(max(clientHeight - 40, 24))` (40 = both fades, so the cut-off line lands clear of the top fade), smooth unless reduced motion; mousedown does not take focus. Focused box that stops overflowing keeps region/tab stop until blur (focus never drops to body). Focus ring `focus-visible:outline-offset-4`. Short text: natural height, no region/tab stop/fades/chevron. `overscroll-y-auto` on every pointer (swipe/wheel at the end chains to the modal; modal scroll area is `overscroll-contain` + body lock, so the page never moves). `<p>` is `whitespace-pre-wrap break-words`, box `overflow-x-hidden`. Modal passes `description.trim()` (computed once); whitespace-only → no section
+
+**Requests**
+- **RequestCard** ✅ - Cover, title, author, status badge, progress bar, timestamps, action buttons (cancel, manual search, interactive search). When status=`awaiting_release` and `releaseDate` is set, shows "Releases &lt;Mon DD, YYYY&gt;" next to the status badge (UTC-formatted)
+- **StatusBadge** - Color-coded status (pending=yellow, awaiting_search=yellow, searching=blue, downloading=purple, downloaded=green, processing=orange, awaiting_import=orange, available=green, completed=green, failed=red, warn=orange, cancelled=gray, awaiting_approval=yellow, awaiting_release=teal "Awaiting Release", denied=red). Shows "Initializing..." when downloading with 0% progress (fetching torrent info), "Downloading" when progress > 0%
+- **ProgressBar** - Animated fill with percentage
+- **InteractiveTorrentSearchModal** ✅ - Responsive table of ranked torrent results, uses ConfirmModal for downloads, hides columns on smaller screens (size on mobile, seeds on tablet, indexer on desktop). Titles render verbatim; bracketed tags (e.g. `[German]`, `[Unabridged]`) parsed via `extractTitleTags` render as slate chips in the metadata row (de-duped vs `displayFormat`); an explicit chevron-disclosure button toggles per-`guid` expand only when the title is truncated (via `useIsTruncated`), state resets on close
+- Active indicator: "Setting up..." with spinner when progress = 0%, "Active" with pulsing dot when progress > 0%
+
+**Forms**
+- **SearchBar** - Debounced input with suggestions
+- **Button** - Variants (primary/secondary/outline/ghost/danger), sizes (sm/md/lg), loading state
+- **Input** - Label, error display, validation, icons
+- **Select** - Custom styling, search/filter
+- **Modal** ✅ - Dialog overlay with dimmed backdrop (`bg-black/50`: Tailwind v4 has no `*-opacity-<n>` utilities, use the slash form; `tests/components/tailwind-opacity-utilities.test.ts` guards `src`), sizes (sm/md/lg/xl/full), ESC to close, body scroll lock
+- **ConfirmModal** ✅ - Confirmation dialog with customizable title, message (string or node), buttons, loading state, `confirmDisabled`, and variant (primary/danger)
+- **WatchModeChoice** ✅ - `src/components/ui/WatchModeChoice.tsx`: fieldset radio group "Entire catalog / New releases only" for watched authors/series (Watch dialog, Profile Change dialog); backlog note on New → Entire. See [features/watched-lists.md](../features/watched-lists.md)
+- **WatchModeControl** ✅ - `src/components/profile/WatchModeControl.tsx`: watched card mode line (cutoff shown as its UTC day) + bordered Change button → dialog (Save disabled until changed, PATCH; a failed Save shows a `role="alert"` message)
+- **ChangePasswordModal** ✅ - Password change form for local users. Three fields (current, new, confirm), real-time validation, success/error states, auto-closes on success. Only accessible to users with `authProvider='local'`
+- **Pagination** ✅ - Traditional page navigation with prev/next buttons, smart ellipsis (shows 1...4 5 6...10)
+- **StickyPagination** ✅ - Minimal floating pill at bottom center with prev/next arrows, quick jump input, section label. Shows/hides based on section visibility (IntersectionObserver). Rounded-full design, backdrop blur, subtle shadow, auto-scroll on page change
+
+**Auth**
+- **ProtectedRoute** ✅ - Auth check, loading state, redirects, admin role support
+- **LoginPage** ✅ - Full-screen design, floating covers, Plex OAuth popup
+
+**Admin**
+- **MetricCard** - Icon, label, value, trend
+- **DataTable** - Sorting, filtering, pagination
+- **Chart** - Line/bar/pie
+
+## Pages Implemented ✅
+
+**Homepage** (`/`)
+- Popular Audiobooks and New Releases sections with distinct visual separation
+- Sticky section headers with rounded-2xl design matching section card aesthetic
+- Gradient accent bars for each section (blue/purple for Popular, emerald/teal for New Releases)
+- Headers use rounded cards (bg-white/90 dark:bg-gray-800/90) with backdrop blur
+- Section content wrapped in semi-transparent rounded cards (bg-white/40 dark:bg-gray-800/40)
+- Cohesive rounded design language throughout (rounded-2xl on headers and containers)
+- Floating pagination pill at bottom center of viewport
+- Minimal design: section label | ← | Page X of Y | →
+- Quick jump input (type page number + Enter)
+- Free-scroll tracking via IntersectionObserver (reports dominant section to parent)
+- Controlled `activeIndex` lives on the home page; pill is observer-aware but parent-decided
+- **Lock-to-section on Prev/Next/jump:** pill stays anchored to the paged section until the user generates a scroll input (`wheel`, `touchstart`, `ArrowUp/Down`, `PageUp/Down`, `Home`, `End`) or clicks another section's dot. 30s safety auto-release.
+- **Fit-aware scroll:** if the section already fits below the sticky header, paging swaps cards in place (no scroll). Otherwise snaps the section top under the header with breathing room (8px top, 24px bottom). Target Y is clamped to `[0, maxScrollY]` so paging can never scroll the section out of the viewport.
+- Dot click on a different section always scrolls (intentional navigation) and releases any active lock.
+- Visibility: pill is shown anywhere on homepage main content; hidden only when the footer enters view. Stays visible over the CTA card gap between the last section and the footer.
+- Rounded-full design with backdrop blur and subtle shadow
+- Responsive grid layouts (1/2/3/4 cols)
+- Enhanced CTA section with gradient background (blue-to-indigo)
+
+**Requests Page** (`/requests`)
+- Filter tabs: All, Active, Waiting, Completed, Failed, Cancelled
+- Auto-refresh every 5s (SWR)
+- Request counts per tab
+- Cancel functionality
+- Loading skeletons, empty states
+- Waiting filter shows awaiting_search and awaiting_import statuses
+
+**Profile Page** (`/profile`)
+- User info card (avatar, username, email, role, Plex ID)
+- Stats: Total/Active/Waiting/Completed/Failed/Cancelled requests
+- Active downloads section
+- Recent requests (last 5)
+- Auto-refresh every 5s
+- Waiting stat shows awaiting_search and awaiting_import statuses
+
+## Component APIs
+
+```typescript
+interface AudiobookCardProps {
+  audiobook: {asin, title, author, narrator?, coverArtUrl?, rating?, durationMinutes?, isRequested?, requestStatus?, requestedByUsername?};
+  onRequest?: (asin: string) => void;
+  isRequested?: boolean;
+  requestStatus?: string;
+  onRequestSuccess?: () => void;
+}
+
+interface AudiobookDetailsModalProps {
+  asin: string;
+  isOpen: boolean;
+  onClose: () => void;
+  onRequestSuccess?: () => void;
+  onStatusChange?: (newStatus: string) => void;
+  onIgnoreChange?: (isIgnored: boolean) => void;
+  isRequested?: boolean;
+  requestStatus?: string | null;
+  isAvailable?: boolean;
+  requestedByUsername?: string | null;
+  requestId?: string | null; // Request behind the card; Interactive Search picks for it (select-torrent / select-ebook) when own or admin and status is advanceable (`ADVANCEABLE_FROM_INTERACTIVE_SEARCH` / `EBOOK_ADVANCEABLE_FROM_INTERACTIVE_SEARCH`, `src/lib/constants/request-statuses.ts`)
+  requestedByUserId?: string | null; // Owner of requestId
+  requestType?: 'audiobook' | 'ebook'; // 'ebook' → Interactive Search searches ebook sources (with requestId when pending/failed/awaiting_search, else by ASIN)
+  hideRequestActions?: boolean; // Hides sticky action bar for read-only contexts (BookDate, ShelvesSection)
+  hasReportedIssue?: boolean;
+  aiReason?: string | null;
+  adminActions?: React.ReactNode; // Optional admin buttons (Approve/Search/Deny) rendered as second row in action bar
+}
+
+interface BookSummaryProps {
+  text: string; // already trimmed; paragraphs kept via whitespace-pre-wrap
+}
+
+interface RequestCardProps {
+  request: {id, type?, userId?, status, progress, audiobook: {title, author, coverArtUrl?, audibleAsin?}, createdAt, updatedAt};
+  // Passes id, userId and type to AudiobookDetailsModal so a My Requests pick goes to this request (#281)
+  showActions?: boolean;
+}
+
+interface ModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  children: React.ReactNode;
+  size?: 'sm' | 'md' | 'lg' | 'xl' | 'full';
+  showCloseButton?: boolean;
+}
+
+interface InteractiveTorrentSearchModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  requestId: string;
+  audiobook: {title: string, author: string};
+  onSuccess?: (outcome?: {needsApproval?: boolean}) => void; // ebook picks pass needsApproval; details modal toasts "submitted for approval"
+}
+
+interface ConfirmModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  title: string;
+  message: string | React.ReactNode;
+  confirmText?: string;
+  cancelText?: string;
+  isLoading?: boolean;
+  confirmDisabled?: boolean; // disables Confirm (e.g. nothing changed)
+  variant?: 'danger' | 'primary';
+  secondaryText?: string; // optional third button between Cancel and Confirm
+  onSecondary?: () => void;
+}
+
+interface PaginationProps {
+  currentPage: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+  className?: string;
+}
+
+interface StickyPaginationProps {
+  currentPage: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+  sectionRef: React.RefObject<HTMLElement | null>;
+  label: string;
+}
+
+interface UnifiedPaginationProps {
+  sections: PaginationSection[];
+  footerRef?: React.RefObject<HTMLElement | null>;
+  activeIndex: number;                              // controlled by parent
+  onDominantSectionChange: (idx: number) => void;   // observer guess; parent decides
+}
+```
+
+## Custom Hooks
+
+- **useAuth** - `{user, login, logout, isLoading}`
+- **useAudiobooks** - `{audiobooks, isLoading, error, totalPages, hasMore}`
+- **useAudiobookDetails** ✅ - `{audiobook, isLoading, error}` - Fetches individual audiobook by ASIN
+- **useRequest** - `{createRequest, cancelRequest, isLoading}`
+- **useSeriesSearch** ✅ - `{series, isLoading, hasData, error, retry}`: trimmed query (no request when blank), no automatic retry on error, `error.status` from `fetchJSON`, `retry` = `mutate()`
+
+## Styling
+
+**Tailwind Patterns:**
+- Container: `container mx-auto px-4 py-8 max-w-7xl`
+- Card: `bg-white dark:bg-gray-800 rounded-lg shadow-md p-6`
+- Button: `bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md`
+- Grid: `grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6`
+
+**Dark Mode:** Use `dark:` variant
+
+## Responsive Breakpoints
+
+- Mobile: <768px (1 col)
+- Tablet: 768-1024px (2 cols)
+- Desktop: 1024-1280px (3 cols)
+- Large: >1280px (4 cols)
+
+## Tech Stack
+
+- Next.js 14+ App Router
+- React 19
+- Tailwind CSS 4
+- Heroicons/Lucide React
+- React Hook Form + Zod
+- SWR (data fetching)
+- date-fns (formatting)

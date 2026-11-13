@@ -1,0 +1,243 @@
+/**
+ * Component: Goodreads Shelf Sync Service
+ * Documentation: documentation/backend/services/goodreads-sync.md
+ *
+ * Fetches Goodreads shelf RSS feeds and delegates book processing
+ * to the shared shelf-sync-core service.
+ */
+
+import axios from 'axios';
+import { RMAB_USER_AGENT } from '@/lib/utils/user-agent';
+import { XMLParser } from 'fast-xml-parser';
+import { prisma } from '@/lib/db';
+import { Prisma } from '@/generated/prisma/client';
+import { RMABLogger } from '@/lib/utils/logger';
+import { SYNC_USER_SELECT, withoutDeletedUsers } from '@/lib/utils/deleted-user-skip';
+import {
+  GOODREADS_FEED_ENDED_STATUSES,
+  GOODREADS_RSS_URL_HINT,
+  GoodreadsFeedEndedError,
+  isGoodreadsHttpsUrl,
+  toGoodreadsRssUrl,
+} from '@/lib/utils/goodreads-rss-url';
+import {
+  ShelfBook,
+  ShelfSyncStats,
+  ShelfSyncOptions,
+  createEmptyStats,
+  resolveMaxLookups,
+  processShelfBooks,
+} from '@/lib/services/shelf-sync-core.service';
+
+const logger = RMABLogger.create('GoodreadsSync');
+
+/**
+ * Parse a Goodreads RSS feed XML into structured book data.
+ */
+function parseGoodreadsRss(xml: string): { shelfName: string; books: ShelfBook[] } {
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '@_',
+    allowBooleanAttributes: true,
+    // Decode numeric references (&#39;, &#x27;, &#233;) plus a short list of named ones
+    // (&nbsp;, dashes, curly quotes, &hellip;, currency, &copy;/&reg;/&trade;) in titles/authors.
+    // Other named entities (e.g. &eacute;) stay as-is. fast-xml-parser 5.6+ needs this for numeric ones.
+    htmlEntities: true,
+  });
+
+  const parsed = parser.parse(xml);
+  const channel = parsed?.rss?.channel;
+  if (!channel) {
+    throw new Error('Invalid Goodreads RSS: no channel element');
+  }
+
+  const shelfName = typeof channel.title === 'string' ? channel.title : 'Goodreads Shelf';
+
+  let items = channel.item;
+  if (!items) return { shelfName, books: [] };
+  if (!Array.isArray(items)) items = [items];
+
+  const books: ShelfBook[] = [];
+  for (const item of items) {
+    const bookId = item.book_id?.toString();
+    if (!bookId) continue;
+
+    const title = (item.title || '').toString().trim();
+    const author = (item.author_name || '').toString().trim();
+    const coverUrl = (item.book_large_image_url || item.book_medium_image_url || item.book_image_url || '').toString().trim() || undefined;
+
+    if (title && author) {
+      books.push({ bookId, title, author, coverUrl });
+    }
+  }
+
+  return { shelfName, books };
+}
+
+/** Max items Goodreads returns per RSS page */
+const GOODREADS_PAGE_SIZE = 100;
+
+/** Safety cap to avoid infinite loops */
+const MAX_PAGES = 50;
+
+/** Redirects followed per feed page; every hop must stay on https Goodreads */
+const MAX_REDIRECTS = 3;
+
+const FETCH_TIMEOUT_MS = 15000;
+
+/**
+ * GET one feed page. Redirects are followed by hand so each hop's target is checked
+ * before it is requested: only https Goodreads hosts are ever contacted.
+ * A 404/410 throws GoodreadsFeedEndedError: Goodreads no longer serves shelf feeds (#514).
+ */
+async function getGoodreadsPage(pageUrl: string): Promise<string> {
+  let current = pageUrl;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    if (!isGoodreadsHttpsUrl(current)) {
+      throw new Error(`Goodreads feeds are only fetched from ${GOODREADS_RSS_URL_HINT}`);
+    }
+    const response = await axios.get(current, {
+      timeout: FETCH_TIMEOUT_MS,
+      headers: { 'User-Agent': RMAB_USER_AGENT },
+      maxRedirects: 0,
+      validateStatus: (status) => (status >= 200 && status < 400) || GOODREADS_FEED_ENDED_STATUSES.includes(status),
+    });
+    if (GOODREADS_FEED_ENDED_STATUSES.includes(response.status)) {
+      throw new GoodreadsFeedEndedError(response.status);
+    }
+    const isRedirect = response.status >= 300 && response.status < 400;
+    if (!isRedirect) return response.data;
+
+    const location = response.headers?.location;
+    if (!location) throw new Error(`Goodreads returned HTTP ${response.status} without a redirect target`);
+    current = new URL(String(location), current).toString();
+  }
+  throw new Error('Too many redirects while fetching the Goodreads feed');
+}
+
+/**
+ * Fetch and validate a Goodreads RSS URL.
+ * Automatically paginates (sort=title, page=1,2,...) when a page returns 100 items.
+ * Deduplicates by bookId across pages.
+ */
+export async function fetchAndValidateRss(rssUrl: string): Promise<{ shelfName: string; books: ShelfBook[] }> {
+  const feedUrl = toGoodreadsRssUrl(rssUrl);
+  if (!feedUrl) {
+    throw new Error(`Not a Goodreads shelf RSS URL (${GOODREADS_RSS_URL_HINT})`);
+  }
+  const url = new URL(feedUrl);
+  url.searchParams.set('sort', 'title');
+
+  let shelfName = 'Goodreads Shelf';
+  const seenIds = new Set<string>();
+  const allBooks: ShelfBook[] = [];
+
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    url.searchParams.set('page', page.toString());
+
+    const parsed = parseGoodreadsRss(await getGoodreadsPage(url.toString()));
+
+    if (page === 1) {
+      shelfName = parsed.shelfName;
+    }
+
+    for (const book of parsed.books) {
+      if (!seenIds.has(book.bookId)) {
+        seenIds.add(book.bookId);
+        allBooks.push(book);
+      }
+    }
+
+    if (parsed.books.length < GOODREADS_PAGE_SIZE) break;
+  }
+
+  return { shelfName, books: allBooks };
+}
+
+// Re-export types that downstream consumers expect
+export type { ShelfSyncStats as GoodreadsSyncStats };
+export type { ShelfSyncOptions as GoodreadsSyncOptions };
+
+/**
+ * Process Goodreads shelves: fetch RSS, resolve ASINs, create requests.
+ * Called from the unified sync_reading_shelves processor.
+ */
+export async function processGoodreadsShelves(
+  jobLogger?: ReturnType<typeof RMABLogger.forJob>,
+  options: ShelfSyncOptions = {}
+): Promise<ShelfSyncStats> {
+  const log = jobLogger || logger;
+  const stats = createEmptyStats();
+  const maxLookups = resolveMaxLookups(options);
+
+  const whereClause: Prisma.GoodreadsShelfWhereInput = {};
+  if (options.shelfId) whereClause.id = options.shelfId;
+  if (options.userId) whereClause.userId = options.userId;
+
+  const found = await prisma.goodreadsShelf.findMany({
+    where: whereClause,
+    include: { user: { select: SYNC_USER_SELECT } },
+  });
+  // A deleted user's shelves get no fetch, lookup, request or write (#504)
+  const shelves = withoutDeletedUsers(found, 'Goodreads shelf(s)', log);
+
+  if (shelves.length === 0) {
+    if (found.length === 0) log.info(options.shelfId ? 'Shelf not found' : 'No Goodreads shelves configured, skipping');
+    return stats;
+  }
+
+  log.info(`Processing ${shelves.length} Goodreads shelf(s)${maxLookups > 0 ? ` (max ${maxLookups} lookups/shelf)` : ' (unlimited lookups)'}`);
+
+  // Shelves whose feed Goodreads answered 404/410: one warning for the whole run, not one per shelf (#514)
+  let endedFeeds = 0;
+
+  for (const shelf of shelves) {
+    try {
+      log.info(`Fetching RSS for shelf "${shelf.name}" (user: ${shelf.user.plexUsername})`);
+
+      let rssData: { shelfName: string; books: ShelfBook[] };
+      try {
+        rssData = await fetchAndValidateRss(shelf.rssUrl);
+      } catch (error) {
+        stats.errors++;
+        if (error instanceof GoodreadsFeedEndedError) {
+          endedFeeds++;
+          log.debug(`Goodreads answered HTTP ${error.status} for shelf "${shelf.name}" (user: ${shelf.user.plexUsername})`);
+        } else {
+          log.error(`Failed to fetch RSS for shelf "${shelf.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+        continue;
+      }
+
+      log.info(`Found ${rssData.books.length} books in shelf "${shelf.name}"${!shelf.autoRequest ? ' (auto-request disabled)' : ''}`);
+
+      const bookData = await processShelfBooks(
+        'goodreads', rssData.books, shelf.user.id, shelf.id, stats, log, maxLookups, shelf.autoRequest,
+      );
+
+      await prisma.goodreadsShelf.update({
+        where: { id: shelf.id },
+        data: {
+          lastSyncAt: new Date(),
+          bookCount: rssData.books.length,
+          coverUrls: bookData.length > 0 ? JSON.stringify(bookData) : null,
+        },
+      });
+
+      stats.shelvesProcessed++;
+    } catch (error) {
+      stats.errors++;
+      log.error(`Failed to process shelf "${shelf.name}" for user ${shelf.user.plexUsername}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  if (endedFeeds > 0) {
+    log.warn(
+      `Goodreads no longer serves shelf RSS feeds: ${endedFeeds} shelf(s) skipped (HTTP 404/410). ` +
+      'They will not sync again unless Goodreads brings the feeds back; Hardcover lists still work.'
+    );
+  }
+
+  log.info(`Goodreads sync complete: ${stats.shelvesProcessed} shelves, ${stats.booksFound} books, ${stats.lookupsPerformed} lookups, ${stats.requestsCreated} requests created, ${stats.errors} errors`);
+  return stats;
+}

@@ -1,0 +1,204 @@
+# Recurring Jobs Scheduler
+
+**Status:** ✅ Implemented
+
+Manages recurring/scheduled jobs providing automated tasks (Plex scans, Audible refresh) with scheduled (cron) execution and manual triggering.
+
+## Recent Updates
+
+- Config validation before job execution
+- Audible refresh persists to database
+- Enhanced error handling with clear messages
+- Schedule editing UI with toast notifications
+- Human-friendly schedule descriptions and editor (preset/custom/advanced modes)
+- Real-time cron expression preview
+- Admin Jobs page shows per-job descriptions inline; startup auto-renames legacy "Plex *" job names to neutral defaults (type-gated, exact-literal match only)
+
+## Scheduled Jobs
+
+1. **plex_library_scan** - Default: every 6 hours, full library scan, disabled by default (enable after setup). A book whose library item is gone (stale record or orphaned link) has its `available` requests moved on by `src/lib/processors/library-removal.ts`: no audio file left in its organized folder (`Audiobook.filePath`: the folder itself plus one level of disc folders; extensions from `isAudioFilename()` in `files-hash.ts`), folder gone, or none on record → `failed`, `errorMessage` = `REMOVED_FROM_LIBRARY_MESSAGE` (`src/lib/constants/request-statuses.ts`, matched by equality: never reword); audio still there (or folder unreadable) → `downloaded`. Both are matched again if the book returns. Requests already stuck in `downloaded` before this fix are not repaired: delete them in the admin UI, then request again
+2. **plex_recently_added_check** - Default: every 5 minutes, lightweight polling of top 10 recently added items, enabled by default. ABS: items without ASIN are matched and the ASIN from the match response is stored at once (#287, [file-hash-matching.md](../../fixes/file-hash-matching.md#asin-read-back-287))
+3. **audible_refresh** - Default: daily midnight, fetches 200 popular + 200 new releases, stores with rankings, disabled by default
+4. **retry_missing_torrents** - Default: daily midnight, processes union of `awaiting_search` ∪ eligible `awaiting_release` (limit 50), handles both audiobook and ebook requests. Fair ordering: never-searched first, then least-recently searched; future `awaiting_release` rows do not consume retry slots. Bidirectional transitions: `awaiting_search` → `awaiting_release` when release date is future + `indexer.skip_unreleased` ON; `awaiting_release` → `awaiting_search` + run search when release date has passed or setting OFF. Sole owner of these transitions. Enabled by default.
+5. **retry_failed_imports** - Default: every 6 hours, re-attempts `awaiting_import` status (limit 50), ordered by oldest `lastImportAt` so the backlog rotates fairly; enabled by default
+6. **find_missing_ebooks** - Default: daily midnight, scans `downloaded` ∪ `available` audiobook requests (limit 50) for missing ebook companions and triggers the existing ebook fetch flow (`addSearchEbookJob`). Gated by `ebook_auto_grab_enabled` AND at least one ebook source enabled (`ebook_annas_archive_enabled` or `ebook_indexer_search_enabled`; legacy `ebook_sidecar_enabled` accepted as Anna's fallback). Skips ebook children in-flight (`pending`, `awaiting_approval`, `searching`, `downloading`, `processing`, `awaiting_search`, `awaiting_release`) or `cancelled`. Skips books whose folder (`Audiobook.filePath`) already holds an ebook file before creating or retrying (#313, see [ebook-sidecar.md](../../integrations/ebook-sidecar.md#on-disk-check-313)). Retries `failed`/`warn` children up to **5 lifetime auto-retries** per audiobook, tracked in `Request.ebookAutoRetryCount` (nullable; processor-private — manual "Fetch Ebook" never reads/writes it). Per-candidate writes are wrapped in `prisma.$transaction` for race-safety with concurrent auto-grab; counter rolls back if `addSearchEbookJob` throws. Leaves out requests of deleted users (`User.deletedAt` set, #504): no ebook request created or retried for them, and they use no slot of the limit. Enabled by default. Returns `{ scanned, gapsFound, triggered, created, retried, skippedInFlight, skippedCancelled, skippedCapHit, skippedOnDisk }`.
+7. **cleanup_seeded_torrents** - Default: every 30 mins, deletes torrents after seeding requirements met. Respects per-indexer `seedingTimeMinutes` AND `ratioLimit` (BOTH required when set; `0` disables that criterion; both `0` = never cleaned up). Undefined ratio with `ratioLimit > 0` = not met (safe-deny). Rule in `evaluateSeeding()` (`src/lib/utils/seeding-policy.ts`), shared with request deletion. Indexer settings (`createIndexerConfigLookup()`, `src/lib/utils/indexer-config.ts`): by `DownloadHistory.indexerId` (Prowlarr id, survives renames), except when the recorded `indexerName` is a DIFFERENT configured indexer (name wins) or the id's indexer has another protocol than the download (`CLIENT_PROTOCOL_MAP[downloadClient]`; id ignored) — Prowlarr ids are reused after a rebuild/replacement; both cases log a warning. Rows without an id, or an unconfigured id: by name. No match = unlimited. An id reused while its old indexer is gone (no name match) still matches by id (indistinguishable from a rename). One info line per run counts matches by id / name / none; per-torrent detail at debug. `prowlarr_indexers` missing or not a JSON list (`parseSavedIndexers()`) → job skipped, nothing changed. Follow-up: `organize-cleanup-guard.ts` (usenet remove-after-processing) still has its own id-only lookup. Enabled by default.
+   - **Candidates (#258):** keyset pages of 100 (`id > last`, `orderBy id asc`, never Prisma `cursor:`, which ends early when its row was hard-deleted) until a short page; only requests with a selected `completed` download, so `removed` rows stop using page slots. Result: `totalChecked, pages, cleaned, skipped (still seeding), unlimited, notOwned, missing, errors, otherClient, stoppedEarly`. Once a request's newest completed row is `removed`, an older selected completed row of the same request becomes the candidate
+   - **Probe:** `probeDownload()` (strict, one request, no retries; [download-clients.md](../../phase3/download-clients.md#torrent-ownership-423)). Not found (well-formed answer without the hash) → row `removed`, nothing removed. Any error (timeout, 403, 5xx, unclear body) → nothing changed, retried next run. 3 probe errors in a row (`MAX_PROBE_ERRORS_IN_A_ROW`) → the run ends (one warn with the count, `stoppedEarly: true`); the next scheduled run tries again
+   - **Ownership (#423):** checked before any delete. `false`/`removed` rows: no client call (soft-deleted request: hard-deleted, torrent kept). Legacy `NULL` row added ≥ 24 h before the request → `false` written (or the soft-deleted request hard-deleted). Unclear / re-added / older copy (`true` row, client added time ≥ 24 h before) → kept, nothing written. Recorded client type ≠ configured client type → skipped before anything else, incl. the same-run duplicate branch (debug per row, one warn per run with the count)
+   - **Cancelled-download pass (#228, credit #506):** `cleanup-cancelled-downloads.ts`, after the seeding pass; skipped when it `stoppedEarly`; never fails the job. Candidates: `status='cancelled'`, `cancelledAt` not null (NULL = cancelled before the column existed: never touched), not deleted, with a selected row that has a `torrentHash`, `downloadStatus` NULL or not `removed`/`failed`, `addedByRmab` true or NULL (NULL-safe ORs). Same keyset paging; newest selected row only. Same decision as the cancel (`handleCancelledDownload`, [request-cancel.md](../../admin-features/request-cancel.md)): partial removed, finished kept until its rule is met then removed, row `completed` + unlimited = no client call. Shares `deletedHashes` and the 3-errors-in-a-row stop (only a lookup the client answered resets the count; a step with no client call leaves it). Usenet never. Result: `cancelled: { checked, removed, keptSeeding, keptUnlimited, keptShared, notOwned, missing, errors, stoppedEarly }` (null when skipped) and its own summary line.
+   - After RMAB removes a torrent: soft-deleted request hard-deleted; active request's row → `removed`; a second row with the same hash in the same run is marked `removed` without a second remove call
+8. **monitor_rss_feeds** - Default: every 15 mins, checks RSS feeds from enabled indexers, matches against all `awaiting_search` requests (audiobook and ebook) in deterministic pages of 100. Release-date gate is applied AFTER a match is found: if matched book is unreleased + `indexer.skip_unreleased` ON, the match is skipped and request status is NOT mutated (retry job owns transitions). Enabled by default.
+
+## Architecture: Bull + Cron
+
+- Repeatable jobs with cron expressions (Bull's built-in scheduler)
+- Manual trigger capability
+- Job persistence and retry logic
+- Admin UI management
+- Automatic scheduling/unscheduling when jobs enabled/disabled
+- Schedule updates handled by unscheduling old job and scheduling new one
+- Startup (`removeOrphanedRepeatableJobs`, after `scheduleAllJobs`): removes repeatable jobs `scheduled-<id>` whose `scheduled_jobs` row is gone (logs each id, then `Repeatable job check: N found, M orphaned removed`); jobs of existing rows untouched; non-fatal
+- `lastRun` update for a missing row (P2025): one warn per schedule id, never throws
+
+## Startup Initialization
+
+**Files:** `src/instrumentation.ts`, `src/lib/startup/{startup-trigger,startup-secret,app-init}.ts`, `src/app/api/init/route.ts`, constants `src/lib/constants/startup.ts`
+- Next.js `register()` (every `next start` / standalone `server.js`: Docker and bare metal) skips the edge runtime and `NEXT_PHASE=phase-production-build`, then fires `triggerStartupInit()` without awaiting it (Next awaits `register()`)
+- Trigger POSTs `/api/init` with header `x-rmab-startup-token` = per-process secret (32 random bytes, hex; process singleton in memory, never logged/env/disk); `redirect: 'error'` so the header never follows a redirect
+- Targets, in order: `http://127.0.0.1:$PORT`, `http://[::1]:$PORT`, then the server's own address only when it is an IP literal (`HOSTNAME`, or `__NEXT_PRIVATE_ORIGIN` from `next start -H <ip>`), plus `localhost` when that is Next's recorded origin; no other host name is ever used. 404 → try next target; 503/500 → retry later; attempt timeout (120s) → retry later without re-POSTing to other targets
+- **Bound to one address (bare metal):** set `HOSTNAME` to that IP address (not a host name) or bind `0.0.0.0`; otherwise init never runs and the log shows a one-time hint plus the connection error code
+- Retry: capped backoff 1s → 60s (`STARTUP_RETRY_*`), never gives up, warn per failure, error when capped and every 10th attempt; stops after one 200 (logs which target worked)
+- `POST /api/init`: wrong/missing secret → 404; GET → 405. Readiness: DB `SELECT 1` + Redis `PING` with the ready check off and a `STARTUP_REDIS_PING_TIMEOUT_MS` deadline (`LOADING` reply or no answer = not ready) → 503. Then `runCredentialMigration()` + `scheduler.start()` once per process (single-flight; later calls → 200 `alreadyInitialized`). Failure → generic 500, details in logs
+- Init runs inside a route handler so processors share the settings caches that admin routes invalidate
+- Prisma, JobQueue and Scheduler singletons live on `globalThis` (`src/lib/utils/process-singleton.ts`) so a second module copy never starts a second set of processors
+- **Single process only:** PM2 `-i N` / Node cluster is unsupported (peers would 404 on init, and N processes would each run a scheduler)
+- `next dev --experimental-https` does not start the scheduler (trigger only speaks plain HTTP)
+- First boot on an install that never ran `/api/init` (bare metal): never-run jobs count as overdue (`isJobOverdue`), so enabled jobs run once right after startup
+
+## Human-Friendly Scheduling UI
+
+**Three Modes:**
+1. **Common Schedules** - Preset options (every 15min, hourly, daily, weekly, monthly)
+2. **Custom Schedule** - Visual builder with dropdowns for minutes/hours/daily/weekly/monthly
+3. **Advanced (Cron)** - Raw cron expression for power users
+
+**Features:**
+- Human-readable display: "Every 6 hours" instead of "0 */6 * * *"
+- Real-time preview of cron expressions
+- Visual schedule builder (no cron knowledge required)
+- Cron validation before saving
+- Shows both human text and cron expression in job list
+
+**Utility Functions** (`src/lib/utils/cron.ts`):
+- `cronToHuman(cron)` - Converts cron to readable text
+- `customScheduleToCron(schedule)` - Builds cron from visual inputs (auto-converts 24+ hour intervals to daily)
+- `cronToCustomSchedule(cron)` - Parses cron to visual inputs
+- `isValidCron(cron)` - Validates cron expression
+
+## Cron Expressions
+
+```
+* * * * *
+│ │ │ │ └─ day of week (0-7)
+│ │ │ └─── month (1-12)
+│ │ └───── day of month (1-31)
+│ └─────── hour (0-23)
+└───────── minute (0-59)
+```
+
+**Examples:**
+- `0 */6 * * *` - Every 6 hours
+- `0 0 * * *` - Daily midnight
+- `*/30 * * * *` - Every 30 mins
+
+## API Endpoints
+
+**GET /api/admin/jobs** - Get all scheduled jobs (admin auth)
+
+**POST /api/admin/jobs** - Create job (admin auth)
+```json
+{
+  "name": "Daily Audible Refresh",
+  "type": "audible_refresh",
+  "schedule": "0 0 * * *",
+  "enabled": true
+}
+```
+
+**PUT /api/admin/jobs/:id** - Update job (admin auth)
+
+**DELETE /api/admin/jobs/:id** - Delete job (admin auth)
+
+**POST /api/admin/jobs/:id/trigger** - Manually trigger job (admin auth)
+
+**GET /api/admin/jobs/:id/history?limit=50** - Job execution history (admin auth)
+
+## Data Model
+
+```typescript
+interface ScheduledJob {
+  id: string;
+  name: string;
+  type: JobType;
+  schedule: string; // cron
+  enabled: boolean;
+  lastRun: Date | null;
+  nextRun: Date | null;
+  payload: any;
+}
+```
+
+## Implementation Details
+
+**Scheduler Service (`scheduler.service.ts`):**
+- `start()`: Initializes scheduler, creates default jobs, schedules all enabled jobs
+- `scheduleJob()`: Adds job to Bull as repeatable job with cron expression
+- `unscheduleJob()`: Removes repeatable job from Bull
+- `updateScheduledJob()`: Unschedules old job, updates DB, schedules new job if enabled
+- `deleteScheduledJob()`: Unschedules job before deleting from DB
+
+**Job Queue Service (`job-queue.service.ts`):**
+- `addRepeatableJob()`: Registers job type with Bull's repeat scheduler
+- `removeRepeatableJob()`: Removes job from Bull's repeat scheduler
+- Processors for each scheduled job type call `scheduler.triggerJobNow()`
+- `setMaxListeners(20)`: Set on both Redis client and Bull queue to accommodate 12 job processors (6 regular + 6 scheduled)
+
+**Flow:**
+1. App starts → instrumentation trigger → `POST /api/init` → `scheduler.start()` → schedules all enabled jobs
+2. Bull triggers job at cron time → processor calls `triggerJobNow()`
+3. `triggerJobNow()` executes job-specific logic (Plex scan, Audible refresh, etc.)
+4. Updates `lastRun` timestamp in database
+
+## Audible Refresh Processor
+
+**Implementation:**
+1. Fetch 200 popular + 200 new releases (multi-page scraping)
+2. Download and cache cover thumbnails locally (stored in `/app/cache/thumbnails`)
+3. Wipe and re-populate `AudibleCacheCategory` entries with reserved IDs (`__popular__`, `__new_releases__`) and user-configured category IDs; a section whose fetch returns 0 books keeps its previous entries (warning logged, not counted in `categoriesSynced`). Category scrapes with 0 books fall back to the catalog API ([home-sections.md](../../features/home-sections.md#refresh-processor-unified-storage))
+4. Upsert book metadata in `AudibleCache`, ranked entries in `AudibleCacheCategory`
+5. Record sync timestamp (`lastAudibleSync`)
+6. Clean up unused thumbnails (removes covers for audiobooks no longer in cache)
+7. Perform fuzzy matching (70% threshold) against Plex library
+8. Set `plexGuid` when match found (with duplicate protection)
+9. Update `availabilityStatus` to 'available' or 'unknown'
+
+**Duplicate PlexGuid Handling:** Since `plexGuid` has UNIQUE constraint, only first match gets assigned to prevent violations.
+
+**Thumbnail Caching:** Downloads cover images from Audible and stores them locally to reduce external requests. Cached thumbnails are served via `/api/cache/thumbnails/[filename]` endpoint. Unused thumbnails are automatically cleaned up after each sync.
+
+## Fixed Issues ✅
+
+- ✅ Jobs running without config validation
+- ✅ Default alert() popups → toast notifications
+- ✅ No UI for editing schedules → added edit modal
+- ✅ Audible data not persisting → saves to database
+- ✅ One failed nightly Audible refresh (storefront 503 through every retry) emptied home sections (#507) → a fetch with 0 books keeps the section's previous entries and isn't counted as synced; empty category scrapes fall back to the catalog API ([audible.md](../../integrations/audible.md#fixed-issues))
+- ✅ Download progress logging ~500x/s → 10s delay
+- ✅ Requests failing permanently (no torrents) → retry system with 'awaiting_search'
+- ✅ Requests failing permanently (no files) → retry system with max 5 retries + 'warn' status
+- ✅ Failed requests blocking re-requests → allow re-requesting failed/warn/cancelled
+- ✅ Book deleted from the library stuck in Processing, blocking every re-request (#214) → the scan reset it to `downloaded` forever; now `failed` "Removed from library" when no audio is left in its folder (cover.jpg or ebooks alone do not count), re-requestable by anyone; `downloaded` while audio remains. Shelf sync and watched lists never request it again ([release-blocklist.md](../../admin-features/release-blocklist.md#automatic-re-requests-409))
+- ✅ Shelf sync re-grabbing the same dead release every 6 h (#312, #409) → a re-request replaces the failed request atomically and keeps its blocklist; failures with no new block follow the 1/3/7/14/30-day backoff, and cancelled requests are never re-requested automatically ([release-blocklist.md](../../admin-features/release-blocklist.md#automatic-re-requests-409))
+- ✅ A deleted user's shelves and watches kept syncing and creating requests (#504) → `sync_reading_shelves` and `check_watched_lists` drop shelves and watches whose user has `deletedAt` set right after the load (`src/lib/utils/deleted-user-skip.ts`; one info line with the count when any are skipped), and `find_missing_ebooks` leaves out their requests. Rows and existing requests are kept ([goodreads-sync.md](goodreads-sync.md#deleted-users-504), [watched-lists.md](../../features/watched-lists.md))
+- ✅ Files deleted immediately → kept until seeding requirements met
+- ✅ Torrents RMAB did not add (already in the client at grab time) removed with their files by the cleanup and request delete (#423) → `added_by_rmab` recorded at the grab, ownership checked before every remove
+- ✅ Only the first 100 candidates ever checked; torrents removed outside RMAB kept their rows in the candidates forever (#258) → keyset paging over all candidates, gone torrents marked `removed`
+- ✅ No seeding time config → added `seeding_time_minutes`
+- ✅ No ratio-based seeding policy → added per-indexer `ratioLimit` (AND-semantics with `seedingTimeMinutes`; `0` disables; undefined client ratio = safe-deny)
+- ✅ Torrents cleaned up on seeding time alone despite a ratio limit → saving the Indexers settings tab had reset every `ratioLimit` to `0` (#319); fixed in settings-pages.md Fixed Issues #4. Limits already reset must be re-entered
+- ✅ Scheduled jobs not running on schedule → implemented Bull repeatable jobs with cron scheduling
+- ✅ MaxListenersExceededWarning → increased maxListeners to 20 on both Redis client and Bull queue
+- ✅ Cron expressions not user-friendly → added human-readable descriptions and visual schedule builder
+- ✅ Scheduled jobs triggered by timer not appearing in system logs → Job records now created automatically for timer-triggered jobs
+- ✅ Scheduled jobs triggered by timer not updating lastRun timestamp → Job queue now updates lastRun when processing timer-triggered jobs
+- ✅ `scheduledJob.update()` "No record was found" error on every run (#222) → a repeatable job left in Redis after its row was deleted (e.g. database reset) kept firing; startup now removes it, and the lastRun update warns once instead
+- ✅ `plexLibrary.create()` unique `plex_guid` error in the recently-added check / full scan (#222) → two jobs inserting the same new item at once; the losing insert now updates the winner's row (`src/lib/processors/library-row-insert.ts`), same field rules as any existing row (an ASIN is never cleared)
+- ✅ Daily cron patterns at non-midnight hours not recognized → Fixed `getIntervalFromCron` to parse any daily time (e.g., "0 4 * * *")
+- ✅ "Every 24 hours" interval validation error → Auto-converts 24+ hour intervals to daily schedule (0 0 * * *)
+
+## Tech Stack
+
+- Bull repeatable jobs
+- PostgreSQL (scheduled_jobs table)
+- Bull/Redis infrastructure

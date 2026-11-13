@@ -1,0 +1,101 @@
+# API Tokens
+
+**Status:** ✅ Implemented | Personal long-lived tokens, allowlisted endpoints, write capability per issue #169
+
+## Overview
+Static `rmab_`-prefixed tokens act with the owner's full user-level permissions on a fixed allowlist of endpoints. JWT sessions are NOT restricted by the allowlist.
+
+## Key Details
+- **Prefix:** `rmab_` (12-char stored display prefix: `rmab_` + 7 hex chars)
+- **Storage:** SHA-256 hash in `apiToken.tokenHash`; full token shown ONCE on create
+- **Role binding:** Token `role` matches token owner's role at creation time; per request the effective role is capped by the owner's current role (admin token of a demoted owner acts as `user`; a `user` token is not raised on promotion); admin tokens require admin-created
+- **Per-user cap:** 25 active (non-expired) tokens (`MAX_TOKENS_PER_USER`)
+- **Expiry:** Optional (`never`, `30d`, `90d`, `1y`)
+- **Soft-deleted users:** Tokens reject if `tokenUser.deletedAt` is set
+- **Unapproved accounts:** Tokens reject if the owner's `registrationStatus` is `pending_approval` or `rejected` (null counts as approved); `POST /api/admin/api-tokens` for such a target returns 403
+- **Identity attribution:** `req.user.id` resolves to `apiToken.userId` (target user), NOT `apiToken.createdById`
+- **Header:** `Authorization: Bearer rmab_<token>`
+
+## Allowed Endpoints
+| Method | Path | Title | Write | Admin |
+|---|---|---|---|---|
+| GET | `/api/auth/me` | Current user | | |
+| GET | `/api/audiobooks/search` | Search audiobooks | | |
+| GET | `/api/requests` | List requests | | |
+| POST | `/api/requests` | Create request | ✓ | |
+| GET | `/api/requests/:id` | Get request by ID | | |
+| POST | `/api/requests/:id/cancel` | Cancel request | ✓ | |
+| GET | `/api/admin/metrics` | System metrics | | ✓ |
+| GET | `/api/admin/downloads/active` | Active downloads | | ✓ |
+| GET | `/api/admin/requests/recent` | Recent requests | | ✓ |
+
+Source of truth: `src/lib/constants/api-tokens.ts` (`API_TOKEN_ALLOWED_ENDPOINTS`, `API_TOKEN_ENDPOINT_DOCS`).
+
+## Matcher (`isEndpointAllowed`)
+- Compiled once at module load.
+- `path` entries containing `:name` are converted to anchored regexes where each placeholder matches `[^/]+` (a single segment).
+- Sibling sub-routes (e.g. `/api/requests/:id/select-torrent`) are NOT matched by the `/api/requests/:id` entry — they require their own allowlist entry.
+- Method comparison is case-insensitive.
+
+## POST `/api/requests` (Write)
+- Body: `{ "audiobook": { "asin", "title", "author", "narrator?", "description?", "coverArtUrl?" } }`
+- Internally calls `createRequestForUser(req.user.id, audiobook, { bypassIgnore: true })` — token requests bypass the ignore list, matching UI behavior.
+- Optional query param: `?skipAutoSearch=true` defers search-job creation.
+- Side effects (identical to UI): duplicate detection, library check, Audnexus enrichment, audiobook upsert, ignore-list check (bypassed), per-user dedup, auto-approve gating, release-date gate, notification queue, search-job queue.
+- Auto-approve: follows the token owner's per-user `autoApproveRequests` setting, then global. No bypass.
+- Response: `201 { success: true, request }` or named error: `{ error: "AlreadyAvailable" | "BeingProcessed" | "DuplicateRequest" | "Ignored" | "UserNotFound" | "ValidationError", message }`
+
+## GET `/api/requests/:id`
+- Returns request including `audiobook`, `downloadHistory` (selected), and recent `jobs`.
+- Non-admin callers (owner sessions, user-role tokens): explicit field list `OWNER_REQUEST_DETAIL_SELECT` (`src/lib/services/request-detail-query.ts`) — omits `Request.selectedTorrent`, `DownloadHistory.magnetLink/torrentUrl/downloadPath`, `Audiobook.filePath`, `Job.payload/result/stackTrace`; remaining strings pass through `stripProwlarrKeyFromResults()`. Admins get the full include, minus `Request.placedEbookFiles` and `Request.approvalBypassedBy` (#232) (never returned by any request response: `GET /api/requests` list, `POST /api/requests` and this route included).
+- Ownership enforced: `requestRecord.userId === req.user.id || role === 'admin'` → otherwise 403.
+- Soft-deleted requests (`deletedAt != null`) return 404.
+- BigInt columns (`downloadHistory[].torrentSizeBytes`, `audiobook.fileSizeBytes`) go out as JSON numbers via `toJsonSafe()` (`src/lib/utils/json-safe.ts`).
+
+## Fixed Issues
+- **#261 GET `/api/requests/:id` 500 `FetchError` for any request with a selected download:** `NextResponse.json` threw `Do not know how to serialize a BigInt` on `DownloadHistory.torrentSizeBytes`. Fix: response passes through `toJsonSafe()` (BigInt → number; Dates/Decimals untouched). Other routes `select` around the BigInt columns or convert with `Number()`; routes with a full `audiobook` include carry `fileSizeBytes`, which nothing writes yet (always null), so they serialize today.
+
+## POST `/api/requests/:id/cancel` (Write, #228)
+- Route: `src/app/api/requests/[id]/cancel/route.ts` → `cancelLoadedRequest()` ([request-cancel.md](../../admin-features/request-cancel.md)).
+- Owner, or effective role admin (a token acts with its owner's current role); 403 otherwise; 404 missing or soft-deleted; 400 status not in `CANCELLABLE_STATUSES` (`pending`, `searching`, `downloading`, `awaiting_search`, `awaiting_approval`, `awaiting_release`; `cancelled` = idempotent 200).
+- `200 { success, request: {id, status, cancelledAt}, download, message }`: no `selectedTorrent`, no download internals. Non-admin messages never name the client or a sharing request, and non-admins get `download: 'kept'` for `kept_shared` / `kept_not_owned`.
+- Stops RMAB's own partial download; a finished one may stay to seed; never deletes library files.
+- `PATCH`/`DELETE /api/requests/:id` are NOT on the allowlist. The raw `DELETE /api/requests/:id` handler was removed (405); admin delete is `DELETE /api/admin/requests/:id` (JWT only).
+
+## GET `/api/audiobooks/search`
+- Auth is optional (route never calls `requireAuth`). An API token counts only on allowlisted endpoints (this one is listed); elsewhere `getOptionalAuthUser` treats it as no caller.
+- Uses `getOptionalAuthUser` to recognize both JWT sessions AND API tokens (same account checks as `requireAuth`) for per-user enrichment (request status, ignore status).
+- Without a checked caller: same results with no request details (`isRequested: false`, request fields `null`) and `isIgnored: false`.
+- With a checked JWT or `rmab_` token: results enriched with `isRequested`, `requestStatus`, `requestId`, `isIgnored`, etc.
+
+## Auth flow
+1. Request hits route; `requireAuth` extracts `Authorization: Bearer ...` token.
+2. If token starts with `rmab_` → `authenticateApiToken` (SHA-256 lookup, expiry + soft-delete check, fire-and-forget `lastUsedAt` update).
+3. If on the allowlist → handler runs with `req.user = { sub, id, plexId, username, role }`.
+4. If not on the allowlist → 403 "This endpoint is not available via API token authentication".
+5. JWT tokens skip the allowlist entirely.
+
+## UI surfaces
+- `/api-docs` page (`src/app/api-docs/page.tsx`) — auto-renders `API_TOKEN_ENDPOINT_DOCS`. Endpoints with `isWrite: true` show an amber **Write** badge; the "Try it" button is disabled with a "use curl" hint to avoid sending mutating requests from a UI that cannot construct request bodies.
+- Profile → API Tokens (`src/components/profile/ApiTokensSection.tsx`) — create/revoke UI. Includes a one-line warning that tokens act with the owner's full permissions.
+- Admin → Users → API Tokens — admin can create tokens on behalf of any user.
+
+## Files
+- Constants + matcher: `src/lib/constants/api-tokens.ts`
+- Middleware: `src/lib/middleware/auth.ts` (`requireAuth`, `getOptionalAuthUser`)
+- Routes:
+  - `src/app/api/user/api-tokens/route.ts` (user create/list/revoke)
+  - `src/app/api/admin/api-tokens/route.ts` (admin)
+- UI: `src/app/api-docs/page.tsx`, `src/components/api-docs/EndpointCard.tsx`, `src/components/api-docs/TokenInput.tsx`, `src/components/profile/ApiTokensSection.tsx`
+
+## Tests
+- `tests/constants/api-tokens.test.ts` — matcher: positive matches, negative matches, sub-route exclusion, method case-insensitivity, allowlist/docs parity.
+- `tests/middleware/auth.middleware.test.ts` — middleware token auth path, allowlist enforcement (incl. dynamic ID match), sibling-route blocking, `getOptionalAuthUser`.
+- `tests/api/requests-id.route.test.ts` — owner GET 200, cross-user GET 403.
+- `tests/api/requests-cancel.route.test.ts` — cancel route: owner 200 minimal body, cross-user 403, admin any, 404, 400.
+- `tests/api/requests-id.bigint.route.test.ts` — owner/admin GET 200 with BigInt sizes as numbers (#261).
+- `tests/utils/json-safe.test.ts` — `toJsonSafe()` BigInt conversion, Date/Decimal passthrough.
+
+## Related
+- [backend/services/auth.md](auth.md) — JWT sessions, role-based access control
+- [backend/services/notifications.md](notifications.md) — request notification triggers
