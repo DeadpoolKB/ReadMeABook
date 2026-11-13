@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>k - Configuration</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+
+    header {
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid #333;
+    }
+
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .subtitle {
+      color: #888;
+      font-size: 0.9rem;
+    }
+
+    .nav {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .nav button {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      color: #e0e0e0;
+      padding: 0.5rem 1rem;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+
+    .nav button:hover {
+      background: #2a2a2a;
+      border-color: #444;
+    }
+
+    .nav button.active {
+      background: #3a3a3a;
+      border-color: #555;
+    }
+
+    .section {
+      display: none;
+    }
+
+    .section.active {
+      display: block;
+    }
+
+    .card {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .card h2 {
+      font-size: 1.25rem;
+      margin-bottom: 1rem;
+      color: #fff;
+    }
+
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 0.5rem;
+      color: #ccc;
+      font-size: 0.9rem;
+    }
+
+    input[type="text"],
+    input[type="number"],
+    input[type="password"],
+    select {
+      width: 100%;
+      padding: 0.75rem;
+      background: #0a0a0a;
+      border: 1px solid #333;
+      border-radius: 4px;
+      color: #e0e0e0;
+      font-size: 0.9rem;
+    }
+
+    input:focus,
+    select:focus {
+      outline: none;
+      border-color: #555;
+    }
+
+    .toggle-group {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: #0a0a0a;
+      border: 1px solid #333;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .toggle:hover {
+      border-color: #444;
+    }
+
+    .toggle.active {
+      background: #2a2a2a;
+      border-color: #555;
+    }
+
+    .toggle input {
+      display: none;
+    }
+
+    .form-group .toggle {
+      background: transparent;
+      border: none;
+      padding: 0;
+    }
+
+    .form-group .toggle input[type="checkbox"] {
+      display: block;
+      width: 1.2rem;
+      height: 1.2rem;
+      cursor: pointer;
+    }
+
+    .btn {
+      background: #3a3a3a;
+      border: none;
+      color: #fff;
+      padding: 0.75rem 1.5rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+    }
+
+    .btn:hover {
+      background: #4a4a4a;
+    }
+
+    .btn-primary {
+      background: #555;
+    }
+
+    .btn-primary:hover {
+      background: #666;
+    }
+
+    .status {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      margin-left: 0.5rem;
+    }
+
+    .status.online {
+      background: #1a3a1a;
+      color: #4ade80;
+    }
+
+    .status.offline {
+      background: #3a1a1a;
+      color: #f87171;
+    }
+
+    .help-text {
+      font-size: 0.8rem;
+      color: #666;
+      margin-top: 0.25rem;
+    }
+
+    .actions {
+      display: flex;
+      gap: 1rem;
+      margin-top: 1.5rem;
+    }
+
+    .notification {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 1rem 1.5rem;
+      display: none;
+      z-index: 1000;
+    }
+
+    .notification.show {
+      display: block;
+    }
+
+    .notification.success {
+      border-color: #4ade80;
+    }
+
+    .notification.error {
+      border-color: #f87171;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>k Configuration</h1>
+      <p class="subtitle">BitChord Addon Settings</p>
+    </header>
+
+    <nav class="nav">
+      <button class="active" data-section="general">General</button>
+      <button data-section="providers">Providers</button>
+      <button data-section="sources">Sources</button>
+      <button data-section="advanced">Advanced</button>
+    </nav>
+
+    <section id="general" class="section active">
+      <div class="card">
+        <h2>Custom Addon URL</h2>
+        <p class="help-text" style="margin-bottom: 1rem;">Generate a custom URL with your configuration to add to BitChord. Each URL has different provider behavior.</p>
+        <div class="form-group">
+          <button class="btn btn-primary" id="generateUrlBtn">Generate Custom Addon URL</button>
+        </div>
+        <div class="form-group" id="urlResult" style="display: none;">
+          <label>Your Custom Addon URL:</label>
+          <input type="text" id="customUrl" readonly>
+          <button class="btn" id="copyUrlBtn" style="margin-top: 0.5rem;">Copy URL</button>
+          <p class="help-text">Add this URL to BitChord as an addon</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Manifest URLs</h2>
+        <p class="help-text" style="margin-bottom: 1rem;">Direct manifest URLs for each source (use default server configuration):</p>
+        <div class="form-group">
+          <label>Multi (Root) <button class="btn" data-copy="manifest-root" style="font-size: 0.8rem; padding: 0.25rem 0.5rem;">Copy</button></label>
+          <input type="text" id="manifest-root" readonly>
+        </div>
+        <div class="form-group">
+          <label>Qobuz-DL <button class="btn" data-copy="manifest-qobuzdl" style="font-size: 0.8rem; padding: 0.25rem 0.5rem;">Copy</button></label>
+          <input type="text" id="manifest-qobuzdl" readonly>
+        </div>
+        <div class="form-group">
+          <label>LastBabe <button class="btn" data-copy="manifest-lastbabe" style="font-size: 0.8rem; padding: 0.25rem 0.5rem;">Copy</button></label>
+          <input type="text" id="manifest-lastbabe" readonly>
+        </div>
+        <div class="form-group">
+          <label>Monochrome <button class="btn" data-copy="manifest-monochrome" style="font-size: 0.8rem; padding: 0.25rem 0.5rem;">Copy</button></label>
+          <input type="text" id="manifest-monochrome" readonly>
+        </div>
+        <div class="form-group">
+          <label>Deezer <button class="btn" data-copy="manifest-deezer" style="font-size: 0.8rem; padding: 0.25rem 0.5rem;">Copy</button></label>
+          <input type="text" id="manifest-deezer" readonly>
+        </div>
+        <div class="form-group">
+          <label>Instable <button class="btn" data-copy="manifest-instable" style="font-size: 0.8rem; padding: 0.25rem 0.5rem;">Copy</button></label>
+          <input type="text" id="manifest-instable" readonly>
+        </div>
+        <div class="form-group">
+          <label>Archive <button class="btn" data-copy="manifest-archive" style="font-size: 0.8rem; padding: 0.25rem 0.5rem;">Copy</button></label>
+          <input type="text" id="manifest-archive" readonly>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Server Settings</h2>
+        <div class="form-group">
+          <label for="host">Host</label>
+          <input type="text" id="host" placeholder="0.0.0.0">
+          <p class="help-text">Server bind address</p>
+        </div>
+        <div class="form-group">
+          <label for="port">Port</label>
+          <input type="number" id="port" placeholder="3000">
+          <p class="help-text">Server port</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Cache Settings</h2>
+        <div class="form-group">
+          <label for="cacheTtl">Cache TTL (seconds)</label>
+          <input type="number" id="cacheTtl" placeholder="300">
+          <p class="help-text">How long to cache search results</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Security</h2>
+        <div class="form-group">
+          <label for="idSecret">ID Secret</label>
+          <input type="password" id="idSecret" placeholder="Enter secret">
+          <p class="help-text">Secret used for track ID generation</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Bitrate</h2>
+        <div class="form-group">
+          <label class="toggle active">
+            <input type="checkbox" id="enableBitrate" checked>
+            Enable Bitrate in Stream Responses
+          </label>
+          <p class="help-text">Include bitrate information in stream responses sent to BitChord</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="providers" class="section">
+      <div class="card">
+        <h2>Active Provider</h2>
+        <div class="form-group">
+          <label for="provider">Provider Mode</label>
+          <select id="provider">
+            <option value="multi">Multi (Race between sources)</option>
+            <option value="qobuzdl">Qobuz-DL</option>
+            <option value="http">HTTP (Custom)</option>
+            <option value="stub">Stub (Testing)</option>
+          </select>
+          <p class="help-text">Multi mode races between all sources and returns the first usable result</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Provider URLs</h2>
+        <div class="form-group">
+          <label for="apiBaseUrl">Qobuz-DL Base URL</label>
+          <input type="text" id="apiBaseUrl" placeholder="https://qobuz-dll.foreyou.workers.dev">
+        </div>
+        <div class="form-group">
+          <label for="lastBabeBaseUrl">LastBabe Base URL</label>
+          <input type="text" id="lastBabeBaseUrl" placeholder="https://lastbabe.velixir.run">
+        </div>
+        <div class="form-group">
+          <label for="monochromeBaseUrl">Monochrome Base URL</label>
+          <input type="text" id="monochromeBaseUrl" placeholder="https://tracks.monochrome.st">
+        </div>
+        <div class="form-group">
+          <label for="deezerBaseUrl">Deezer Base URL</label>
+          <input type="text" id="deezerBaseUrl" placeholder="https://dzr.tabs-vs-spaces.wtf">
+        </div>
+        <div class="form-group">
+          <label for="instableBaseUrl">Instable Base URL</label>
+          <input type="text" id="instableBaseUrl" placeholder="https://instable.arcod.xyz">
+        </div>
+        <div class="form-group">
+          <label for="archiveBaseUrl">Archive Base URL</label>
+          <input type="text" id="archiveBaseUrl" placeholder="https://archive.org">
+        </div>
+      </div>
+    </section>
+
+    <section id="sources" class="section">
+      <div class="card">
+        <h2>Source Priority (Multi Mode)</h2>
+        <p class="help-text" style="margin-bottom: 1rem;">Sources are checked in order. Top sources have highest priority.</p>
+        <div class="toggle-group">
+          <label class="toggle active">
+            <input type="checkbox" checked data-source="deezer">
+            Deezer
+          </label>
+          <label class="toggle active">
+            <input type="checkbox" checked data-source="monochrome">
+            Monochrome
+          </label>
+          <label class="toggle active">
+            <input type="checkbox" checked data-source="lastbabe">
+            LastBabe
+          </label>
+          <label class="toggle active">
+            <input type="checkbox" checked data-source="qobuzdl">
+            Qobuz-DL
+          </label>
+          <label class="toggle active">
+            <input type="checkbox" checked data-source="instable">
+            Instable
+          </label>
+          <label class="toggle">
+            <input type="checkbox" data-source="archive">
+            Archive
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Source Status</h2>
+        <div id="sourceStatus">
+          <div class="form-group">
+            <label>Deezer <span class="status online">Online</span></label>
+          </div>
+          <div class="form-group">
+            <label>Monochrome <span class="status online">Online</span></label>
+          </div>
+          <div class="form-group">
+            <label>LastBabe <span class="status online">Online</span></label>
+          </div>
+          <div class="form-group">
+            <label>Qobuz-DL <span class="status online">Online</span></label>
+          </div>
+          <div class="form-group">
+            <label>Instable <span class="status online">Online</span></label>
+          </div>
+          <div class="form-group">
+            <label>Archive <span class="status online">Online</span></label>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="advanced" class="section">
+      <div class="card">
+        <h2>Request Settings</h2>
+        <div class="form-group">
+          <label for="requestTimeout">Request Timeout (ms)</label>
+          <input type="number" id="requestTimeout" placeholder="6000">
+          <p class="help-text">Timeout for upstream requests</p>
+        </div>
+        <div class="form-group">
+          <label for="upstreamRetries">Upstream Retries</label>
+          <input type="number" id="upstreamRetries" placeholder="1">
+          <p class="help-text">Number of retry attempts for failed requests</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Custom HTTP Provider</h2>
+        <div class="form-group">
+          <label for="customApiBaseUrl">Custom API Base URL</label>
+          <input type="text" id="customApiBaseUrl" placeholder="https://api.example.com">
+        </div>
+        <div class="form-group">
+          <label for="searchPath">Search Path</label>
+          <input type="text" id="searchPath" placeholder="/search">
+        </div>
+        <div class="form-group">
+          <label for="streamPath">Stream Path</label>
+          <input type="text" id="streamPath" placeholder="/stream/{id}">
+        </div>
+        <div class="form-group">
+          <label for="apiToken">API Token</label>
+          <input type="password" id="apiToken" placeholder="Bearer token">
+        </div>
+      </div>
+    </section>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="saveBtn">Export .env File</button>
+      <button class="btn" id="resetBtn">Reset to Defaults</button>
+      <button class="btn" id="exportBtn">Export JSON</button>
+      <button class="btn" id="importBtn">Import JSON</button>
+    </div>
+  </div>
+
+  <div class="notification" id="notification"></div>
+
+  <script>
+    // Navigation
+    document.querySelectorAll('.nav button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(btn.dataset.section).classList.add('active');
+      });
+    });
+
+    // Toggle switches
+    document.querySelectorAll('.toggle').forEach(toggle => {
+      toggle.addEventListener('click', () => {
+        toggle.classList.toggle('active');
+        const input = toggle.querySelector('input');
+        input.checked = toggle.classList.contains('active');
+      });
+    });
+
+    // Load configuration
+    async function loadConfig() {
+      try {
+        const response = await fetch('/api/config');
+        if (!response.ok) {
+          throw new Error('Failed to fetch config');
+        }
+        const config = await response.json();
+
+        document.getElementById('host').value = config.host || '0.0.0.0';
+        document.getElementById('port').value = config.port || '3000';
+        document.getElementById('cacheTtl').value = (config.cacheTtlMs / 1000) || '300';
+        document.getElementById('idSecret').value = config.idSecret || '';
+        document.getElementById('enableBitrate').checked = config.enableBitrate !== false;
+        document.getElementById('provider').value = config.provider || 'multi';
+        document.getElementById('apiBaseUrl').value = config.apiBaseUrl || '';
+        document.getElementById('lastBabeBaseUrl').value = config.lastBabeBaseUrl || '';
+        document.getElementById('monochromeBaseUrl').value = config.monochromeBaseUrl || '';
+        document.getElementById('deezerBaseUrl').value = config.deezerBaseUrl || '';
+        document.getElementById('instableBaseUrl').value = config.instableBaseUrl || '';
+        document.getElementById('archiveBaseUrl').value = config.archiveBaseUrl || '';
+        document.getElementById('requestTimeout').value = config.requestTimeoutMs || '6000';
+        document.getElementById('upstreamRetries').value = config.upstreamRetries || '1';
+        document.getElementById('customApiBaseUrl').value = config.apiBaseUrl || '';
+        document.getElementById('searchPath').value = config.searchPath || '';
+        document.getElementById('streamPath').value = config.streamPath || '';
+        document.getElementById('apiToken').value = config.apiToken || '';
+
+        // Set manifest URLs
+        const baseUrl = window.location.origin;
+        document.getElementById('manifest-root').value = `${baseUrl}/manifest.json`;
+        document.getElementById('manifest-qobuzdl').value = `${baseUrl}/a/manifest.json`;
+        document.getElementById('manifest-lastbabe').value = `${baseUrl}/b/manifest.json`;
+        document.getElementById('manifest-monochrome').value = `${baseUrl}/c/manifest.json`;
+        document.getElementById('manifest-deezer').value = `${baseUrl}/d/manifest.json`;
+        document.getElementById('manifest-instable').value = `${baseUrl}/e/manifest.json`;
+        document.getElementById('manifest-archive').value = `${baseUrl}/f/manifest.json`;
+      } catch (error) {
+        console.error('Failed to load config:', error);
+        showNotification('Failed to load configuration - using defaults', 'error');
+        // Set default values
+        document.getElementById('host').value = '0.0.0.0';
+        document.getElementById('port').value = '3000';
+        document.getElementById('cacheTtl').value = '300';
+        document.getElementById('requestTimeout').value = '6000';
+        document.getElementById('upstreamRetries').value = '1';
+        document.getElementById('provider').value = 'multi';
+      }
+    }
+
+    // Save configuration
+    async function saveConfig() {
+      const config = {
+        host: document.getElementById('host').value,
+        port: parseInt(document.getElementById('port').value),
+        cacheTtlMs: parseInt(document.getElementById('cacheTtl').value) * 1000,
+        idSecret: document.getElementById('idSecret').value,
+        enableBitrate: document.getElementById('enableBitrate').checked,
+        provider: document.getElementById('provider').value,
+        apiBaseUrl: document.getElementById('apiBaseUrl').value,
+        lastBabeBaseUrl: document.getElementById('lastBabeBaseUrl').value,
+        monochromeBaseUrl: document.getElementById('monochromeBaseUrl').value,
+        deezerBaseUrl: document.getElementById('deezerBaseUrl').value,
+        instableBaseUrl: document.getElementById('instableBaseUrl').value,
+        archiveBaseUrl: document.getElementById('archiveBaseUrl').value,
+        requestTimeoutMs: parseInt(document.getElementById('requestTimeout').value),
+        upstreamRetries: parseInt(document.getElementById('upstreamRetries').value),
+        searchPath: document.getElementById('searchPath').value,
+        streamPath: document.getElementById('streamPath').value,
+        apiToken: document.getElementById('apiToken').value,
+      };
+
+      // Generate .env file content
+      const envContent = `# HTTP server
+PORT=${config.port}
+HOST=${config.host}
+REQUEST_TIMEOUT_MS=${config.requestTimeoutMs}
+UPSTREAM_RETRIES=${config.upstreamRetries}
+CACHE_TTL_SECONDS=${config.cacheTtlMs / 1000}
+K_ID_SECRET=${config.idSecret}
+
+# Provider selection
+K_PROVIDER=${config.provider}
+K_UPSTREAM_BASE_URL=${config.apiBaseUrl}
+LASTBABE_BASE_URL=${config.lastBabeBaseUrl}
+MONOCHROME_BASE_URL=${config.monochromeBaseUrl}
+DEEZER_BASE_URL=${config.deezerBaseUrl}
+INSTABLE_BASE_URL=${config.instableBaseUrl}
+ARCHIVE_BASE_URL=${config.archiveBaseUrl}
+
+# Bitrate
+ENABLE_BITRATE=${config.enableBitrate ? 'true' : 'false'}
+
+# Only for an authorized, documented provider implementation
+# K_API_BASE_URL=${config.apiBaseUrl}
+# K_SEARCH_PATH=${config.searchPath}
+# K_STREAM_PATH=${config.streamPath}
+# K_API_TOKEN=${config.apiToken}
+`;
+
+      // Download as .env file
+      const blob = new Blob([envContent], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = '.env';
+      a.click();
+      URL.revokeObjectURL(url);
+
+      showNotification('Configuration exported as .env file - place it in the project root', 'success');
+    }
+
+    // Notification
+    function showNotification(message, type) {
+      const notification = document.getElementById('notification');
+      notification.textContent = message;
+      notification.className = `notification show ${type}`;
+      setTimeout(() => {
+        notification.classList.remove('show');
+      }, 3000);
+    }
+
+    // Generate custom addon URL
+    async function generateCustomUrl() {
+      const overrides = {
+        provider: document.getElementById('provider').value,
+        enableBitrate: document.getElementById('enableBitrate').checked,
+        lastBabeBaseUrl: document.getElementById('lastBabeBaseUrl').value || undefined,
+        monochromeBaseUrl: document.getElementById('monochromeBaseUrl').value || undefined,
+        deezerBaseUrl: document.getElementById('deezerBaseUrl').value || undefined,
+        instableBaseUrl: document.getElementById('instableBaseUrl').value || undefined,
+        archiveBaseUrl: document.getElementById('archiveBaseUrl').value || undefined,
+        apiBaseUrl: document.getElementById('apiBaseUrl').value || undefined,
+      };
+
+      // Remove undefined values
+      Object.keys(overrides).forEach(key => {
+        if (overrides[key] === undefined || overrides[key] === '') {
+          delete overrides[key];
+        }
+      });
+
+      try {
+        const response = await fetch('/api/config/encode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(overrides),
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to encode config');
+        }
+
+        const result = await response.json();
+        document.getElementById('customUrl').value = result.url;
+        document.getElementById('urlResult').style.display = 'block';
+        showNotification('Custom URL generated successfully', 'success');
+      } catch (error) {
+        console.error('Failed to generate URL:', error);
+        showNotification('Failed to generate custom URL', 'error');
+      }
+    }
+
+    // Copy to clipboard
+    function copyToClipboard(text) {
+      navigator.clipboard.writeText(text).then(() => {
+        showNotification('Copied to clipboard', 'success');
+      }).catch(() => {
+        showNotification('Failed to copy', 'error');
+      });
+    }
+
+    // Event listeners
+    document.getElementById('generateUrlBtn').addEventListener('click', generateCustomUrl);
+    document.getElementById('copyUrlBtn').addEventListener('click', () => {
+      const url = document.getElementById('customUrl').value;
+      copyToClipboard(url);
+    });
+
+    // Copy manifest URLs
+    document.querySelectorAll('[data-copy]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetId = btn.dataset.copy;
+        const input = document.getElementById(targetId);
+        copyToClipboard(input.value);
+      });
+    });
+
+    document.getElementById('saveBtn').addEventListener('click', saveConfig);
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      if (confirm('Reset to default configuration?')) {
+        document.getElementById('host').value = '0.0.0.0';
+        document.getElementById('port').value = '3000';
+        document.getElementById('cacheTtl').value = '300';
+        document.getElementById('idSecret').value = '';
+        document.getElementById('enableBitrate').checked = true;
+        document.getElementById('provider').value = 'multi';
+        document.getElementById('apiBaseUrl').value = '';
+        document.getElementById('lastBabeBaseUrl').value = '';
+        document.getElementById('monochromeBaseUrl').value = '';
+        document.getElementById('deezerBaseUrl').value = '';
+        document.getElementById('instableBaseUrl').value = '';
+        document.getElementById('archiveBaseUrl').value = '';
+        document.getElementById('requestTimeout').value = '6000';
+        document.getElementById('upstreamRetries').value = '1';
+        document.getElementById('customApiBaseUrl').value = '';
+        document.getElementById('searchPath').value = '';
+        document.getElementById('streamPath').value = '';
+        document.getElementById('apiToken').value = '';
+        showNotification('Configuration reset to defaults', 'success');
+      }
+    });
+    document.getElementById('exportBtn').addEventListener('click', () => {
+      const config = {
+        host: document.getElementById('host').value,
+        port: parseInt(document.getElementById('port').value),
+        cacheTtlMs: parseInt(document.getElementById('cacheTtl').value) * 1000,
+        idSecret: document.getElementById('idSecret').value,
+        provider: document.getElementById('provider').value,
+        apiBaseUrl: document.getElementById('apiBaseUrl').value,
+        lastBabeBaseUrl: document.getElementById('lastBabeBaseUrl').value,
+        monochromeBaseUrl: document.getElementById('monochromeBaseUrl').value,
+        deezerBaseUrl: document.getElementById('deezerBaseUrl').value,
+        instableBaseUrl: document.getElementById('instableBaseUrl').value,
+        archiveBaseUrl: document.getElementById('archiveBaseUrl').value,
+        requestTimeoutMs: parseInt(document.getElementById('requestTimeout').value),
+        upstreamRetries: parseInt(document.getElementById('upstreamRetries').value),
+        searchPath: document.getElementById('searchPath').value,
+        streamPath: document.getElementById('streamPath').value,
+        apiToken: document.getElementById('apiToken').value,
+      };
+      const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'k-config.json';
+      a.click();
+    });
+
+    document.getElementById('importBtn').addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'application/json';
+      input.onchange = async (e) => {
+        const file = e.target.files[0];
+        const text = await file.text();
+        const config = JSON.parse(text);
+        document.getElementById('host').value = config.host || '';
+        document.getElementById('port').value = config.port || '';
+        document.getElementById('cacheTtl').value = (config.cacheTtlMs / 1000) || '';
+        document.getElementById('idSecret').value = config.idSecret || '';
+        document.getElementById('enableBitrate').checked = config.enableBitrate !== false;
+        document.getElementById('provider').value = config.provider || 'multi';
+        document.getElementById('apiBaseUrl').value = config.apiBaseUrl || '';
+        document.getElementById('lastBabeBaseUrl').value = config.lastBabeBaseUrl || '';
+        document.getElementById('monochromeBaseUrl').value = config.monochromeBaseUrl || '';
+        document.getElementById('deezerBaseUrl').value = config.deezerBaseUrl || '';
+        document.getElementById('instableBaseUrl').value = config.instableBaseUrl || '';
+        document.getElementById('archiveBaseUrl').value = config.archiveBaseUrl || '';
+        document.getElementById('requestTimeout').value = config.requestTimeoutMs || '';
+        document.getElementById('upstreamRetries').value = config.upstreamRetries || '';
+        document.getElementById('customApiBaseUrl').value = config.apiBaseUrl || '';
+        document.getElementById('searchPath').value = config.searchPath || '';
+        document.getElementById('streamPath').value = config.streamPath || '';
+        document.getElementById('apiToken').value = config.apiToken || '';
+        showNotification('Configuration imported', 'success');
+      };
+      input.click();
+    });
+
+    // Load config on page load
+    loadConfig();
+  </script>
+</body>
+</html>
