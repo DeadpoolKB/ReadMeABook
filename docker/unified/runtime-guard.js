@@ -62,8 +62,9 @@ function checkPreflight() {
   ok('entrypoint Prisma CLI preflight passes');
 }
 
-// System accounts as shipped by 1.2.7 and later (apt creates postgres/redis in the base stage, node comes
-// from the node image). The entrypoint re-chowns its volumes by name on every start, so a shifted ID would
+// System accounts as shipped by 1.2.7 and later. postgres/redis are pre-created with these IDs in the
+// Dockerfile's base stage (before apt, so the package postinst scripts reuse them); node comes from the
+// node image. The entrypoint re-chowns its volumes by name on every start, so a shifted ID would
 // silently re-own them; what breaks is LXC idmap passthrough of these IDs, filesystems where chown fails,
 // and host-side ownership (backups, permissions set on the host). Fail the build instead.
 const SYSTEM_USERS = { postgres: [102, 106], redis: [101, 105], node: [1000, 1000] };

@@ -21,6 +21,16 @@ FROM mwader/static-ffmpeg:9.0.2-1@sha256:f5d100184884eb3e82b0eb14bb5ebf98da99826
 # Runtime OS layer: debian with node preinstalled
 FROM node:24-bookworm AS base
 
+# Fixed service-account IDs: documented in unified.md and relied on by the runtime guard, LXC
+# idmaps and host-side ownership of pgdata. Creating them before apt makes the postgresql and
+# redis postinst scripts reuse these IDs instead of allocating them from whatever happens to be
+# free when the dependency set (which drifts with the repos) is configured.
+RUN set -eu; \
+    groupadd --system --gid 106 postgres; \
+    useradd --system --uid 102 --gid 106 --home-dir /var/lib/postgresql --shell /bin/bash --no-create-home postgres; \
+    groupadd --system --gid 105 redis; \
+    useradd --system --uid 101 --gid 105 --home-dir /var/lib/redis --shell /usr/sbin/nologin --no-create-home redis
+
 # Install PostgreSQL 16 repository key
 RUN apt-get update && apt-get install -y curl gnupg && \
     install -d /etc/apt/keyrings && \

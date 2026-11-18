@@ -104,7 +104,7 @@ All-in-one Docker image for simple deployment. PostgreSQL + Redis + App in singl
 - Recovery also requires every `/app/scripts/lib/*.js`; `terminal-prompt.js` and `password-users.js` must exist
 - Layout: required runtime paths exist; none of the non-runtime paths (`src/{app,components,contexts,hooks,lib}`, `tests`, `e2e`, `screenshots`, `documentation`, `docker`, `dockerfile.unified`, `package-lock.json`, `tsconfig.json`) is in `/app`
 - Note: Next 16 `next build` uses Turbopack even with `TURBOPACK=0` (chunk names `[turbopack]_runtime.js`)
-- System users (uid:gid) are exactly `postgres=102:106`, `redis=101:105`, `node=1000:1000` (as shipped by 1.2.7 and later; the PUID/LXC sections below and host-side ownership rely on them)
+- System users (uid:gid) are exactly `postgres=102:106`, `redis=101:105`, `node=1000:1000` (as shipped by 1.2.7 and later; the PUID/LXC sections below and host-side ownership rely on them). The `base` stage pre-creates postgres/redis with these IDs before `apt-get install`, so the package postinst scripts reuse them instead of allocating IDs from whatever is free at the time
 - Prints `node <version> (napi, openssl)` for the build log
 - Builtins are skipped with `module.isBuiltin` (Node 24's `builtinModules` lists prefix-only modules such as `node:sqlite` only with the prefix)
 - Every ELF file in `/app` + ffmpeg/ffprobe has the build arch's `e_machine`; expects 1 schema engine, ≥2 `libquery_engine` copies, a bcrypt `.node` binding (bcrypt 5 `bcrypt_lib.node`, bcrypt 6 `prebuilds/linux-<arch>/bcrypt.*.node`)
@@ -115,12 +115,12 @@ All-in-one Docker image for simple deployment. PostgreSQL + Redis + App in singl
 - `unresolvable require("x") in .next/server/…` → standalone tracing missed a server external; fix tracing or add an explicit `COPY`
 - `require("x") … resolves but does not load` → a traced external is missing one of its own dependencies (tracing gap); same fix
 - `non-runtime files in /app` → one of the guard's listed paths (`NOT_SHIPPED` in `runtime-guard.js`) is back in the whole-project trace; restore its `outputFileTracingExcludes` entry in `next.config.ts`. The guard checks only that list, not every new path: keep `NOT_SHIPPED` and the excludes in sync, and add a new top-level dir or `src/` folder to both
-- `system user X is a:b, expected c:d` → the base image or the apt install order changed the account IDs. The entrypoint re-chowns its volumes by name, but LXC idmaps, filesystems where chown fails and host-side ownership would break. Never ship it: diff `/etc/passwd` against the last release, then pre-create the account with the old IDs before `apt-get install`
+- `system user X is a:b, expected c:d` → the account IDs moved. The `base` stage pins postgres/redis to `102:106` / `101:105` before apt, so this means the pin was removed, one of those IDs was already taken in the base image, or the `node` image changed its user. The entrypoint re-chowns its volumes by name, but LXC idmaps, filesystems where chown fails and host-side ownership would break. Never ship it: diff `/etc/passwd` against the last release, then pre-create the account with the old IDs before `apt-get install`
 - `e_machine 0x.., expected 0x..` → wrong-arch native file (e.g. a `--platform=$BUILDPLATFORM` stage); never ship it
 
 **Build process:**
 1. `ffmpeg` stage: pinned `mwader/static-ffmpeg` index digest (platform variant auto-selected)
-2. `base`: apt install (postgres, redis, supervisor, ...), `COPY --from=ffmpeg` ffmpeg/ffprobe → `/usr/local/bin`, versions.json → `/usr/local/share/ffmpeg/`, ffmpeg guard (failure meanings below)
+2. `base`: pre-create `postgres`/`redis` with fixed IDs, apt install (postgres, redis, supervisor, ...), `COPY --from=ffmpeg` ffmpeg/ffprobe → `/usr/local/bin`, versions.json → `/usr/local/share/ffmpeg/`, ffmpeg guard (failure meanings below)
 3. `builder`: install all dependencies, generate Prisma client, build Next.js (standalone); `prisma-cli` builds in parallel
 4. `runtime`: copy artifacts (table above), create directories, copy supervisord.conf + scripts, runtime guard
 
